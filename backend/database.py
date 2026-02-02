@@ -14,7 +14,11 @@ class SessionDatabase:
 
     def __init__(self, db_path='data_cleaning.db'):
         """Initialise la connexion"""
-        self.db_path = os.getenv('DB_PATH', db_path)
+
+
+        self.db_path = os.getenv('DATABASE_URI', '/opt/render/data/data_cleaning.db')
+
+
         self.init_database()
 
     def get_connection(self):
