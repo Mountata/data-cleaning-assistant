@@ -98,7 +98,7 @@ class ProductionConfig(Config):
     MAX_CONTENT_LENGTH = 25 * 1024 * 1024  # 25MB en prod
 
     # Base de données en production (exemple PostgreSQL)
-    # DATABASE_URI = os.environ.get('DATABASE_URL')
+    DATABASE_PATH = os.environ.get('DATABASE_URI', '/opt/render/data/data_cleaning.db')
 
     # CORS plus restrictif
     CORS_ORIGINS = os.environ.get('ALLOWED_ORIGINS', '').split(',')

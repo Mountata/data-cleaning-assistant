@@ -16,6 +16,12 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+
+from config import get_config
+
+configclass = get_config()
+db_path = configclass.DATABASE_PATH  # ← va lire l'ENV ou utiliser le fallback
+
 // IMPORTANT: Remplacez cette IP par l'adresse IP de votre ordinateur sur le réseau local
 // Pour trouver votre IP:
 // - Windows: tapez "ipconfig" dans cmd et cherchez "IPv4"
