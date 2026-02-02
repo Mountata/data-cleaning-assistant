@@ -97,15 +97,20 @@ class ProductionConfig(Config):
     # Sécurité renforcée
     MAX_CONTENT_LENGTH = 25 * 1024 * 1024  # 25MB en prod
 
-    # Base de données en production (exemple PostgreSQL)
+    # Base de données en production
     DATABASE_PATH = os.environ.get('DATABASE_URI', '/opt/render/data/data_cleaning.db')
 
-    # CORS plus restrictif
-    CORS_ORIGINS = os.environ.get('ALLOWED_ORIGINS', '').split(',')
+    # CORS - Ajoutez votre domaine Vercel
+    CORS_ORIGINS = [
+        'https://votre-app.vercel.app',  # ← Remplacez par votre URL Vercel
+        'https://data-cleaning-assistant.onrender.com'
+    ]
+
+    # Vous pouvez aussi utiliser une variable d'environnement
+    # CORS_ORIGINS = os.environ.get('ALLOWED_ORIGINS', '').split(',')
 
     # Logs moins verbeux
     LOG_LEVEL = 'WARNING'
-
 
 class TestingConfig(Config):
     """Configuration pour les tests"""
