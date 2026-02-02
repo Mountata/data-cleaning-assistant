@@ -1,0 +1,36 @@
+# Environnements
+.venv/
+env/
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Flask
+instance/
+*.db
+*.sqlite3
+.env
+
+# Logs
+logs/
+*.log
+
+# Uploads / fichiers générés
+uploads/
+cleaned/
+
+# React / React Native
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store

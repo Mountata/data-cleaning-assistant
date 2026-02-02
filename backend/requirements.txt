@@ -1,0 +1,27 @@
+# Requirements.txt - Dépendances pour l'Assistant de Nettoyage de Données
+
+# Framework Web
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# Manipulation de données
+pandas==2.1.4
+numpy==1.26.2
+openpyxl==3.1.2  # Pour les fichiers Excel
+
+# Analyse statistique
+scipy==1.11.4
+
+# Sécurité et validation
+Werkzeug==3.0.1
+
+# Optionnel : Base de données (pour version production)
+# SQLAlchemy==2.0.23
+# psycopg2-binary==2.9.9  # Pour PostgreSQL
+
+# Optionnel : Amélioration de l'analyse
+# pandas-profiling==3.6.6  # Profiling avancé
+# scikit-learn==1.3.2  # ML pour détection d'anomalies
+
+# Utilitaires
+python-dateutil==2.8.2
