@@ -17,6 +17,9 @@ from auth import auth_bp
 logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+app.config['SECRET_KEY'] = SECRET_KEY
 #CORS(app)
 # Charger la configuration
 configclass = get_config()
