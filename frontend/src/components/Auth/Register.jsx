@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, AlertCircle, CheckCircle, Sparkles } from 'lucide-react';
-import API_URL from '../config/api';
+import API_URL from '../../config/api';
 const Register = ({ onRegister, onSwitchToLogin }) => {
   const [formData, setFormData] = useState({
     name: '',
