@@ -18,13 +18,21 @@ logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 
+
+
 SECRET_KEY = os.getenv("SECRET_KEY")
 app.config['SECRET_KEY'] = SECRET_KEY
 #CORS(app)
 # Charger la configuration
 configclass = get_config()
 app.config.from_object(configclass)
-CORS(app, origins=app.config['CORS_ORIGINS'])
+CORS(app,
+     resources={r"/api/*": {"origins": "*"}},
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+)
+
 
 app.register_blueprint(auth_bp, url_prefix="/api")
 
@@ -722,4 +730,5 @@ def health_check():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)

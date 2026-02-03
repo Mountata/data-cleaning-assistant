@@ -139,7 +139,7 @@ config_dict = {
 def get_config(env=None):
     """Retourne la configuration selon l'environnement"""
     if env is None:
-        env = os.environ.get('FLASK_ENV', 'development')
+        env = os.environ.get('FLASK_ENV', 'production')  # Production par défaut sur Render
 
     return config_dict.get(env, DevelopmentConfig)
 
