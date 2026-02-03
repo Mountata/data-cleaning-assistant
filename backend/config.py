@@ -102,7 +102,7 @@ class ProductionConfig(Config):
 
     # CORS - Ajoutez votre domaine Vercel
     CORS_ORIGINS = [
-        'https://votre-app.vercel.app',  # ← Remplacez par votre URL Vercel
+        'https://data-cleaning-assistant-pi.vercel.app',  # ← Remplacez par votre URL Vercel
         'https://data-cleaning-assistant.onrender.com'
     ]
 
