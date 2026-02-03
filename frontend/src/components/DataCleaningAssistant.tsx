@@ -125,7 +125,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('${API_URL}/api/upload', { method: 'POST', body: formData });
+      const res = await fetch(`${API_URL}/api/upload`, { method: 'POST', body: formData });
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
 
@@ -193,7 +193,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     addMessage('bot', '🔧 Nettoyage en cours...', 'loading');
 
     try {
-      const res = await fetch('${API_URL}/api/clean', {
+      const res = await fetch(`${API_URL}/api/clean`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, actions: selected })
