@@ -15,9 +15,13 @@ class SessionDatabase:
     def __init__(self, db_path='data_cleaning.db'):
         """Initialise la connexion"""
 
-
-        self.db_path = os.getenv('DATABASE_URI', '/opt/render/data/data_cleaning.db')
-
+        # Sur Render (plan gratuit), utiliser /tmp car c'est le seul dossier accessible en écriture
+        # Note: Les données seront perdues à chaque redémarrage
+        if os.environ.get('RENDER'):
+            self.db_path = '/tmp/data_cleaning.db'
+        else:
+            # En local ou si DATABASE_URI est défini (plan payant avec disque persistant)
+            self.db_path = os.getenv('DATABASE_URI', db_path)
 
         self.init_database()
 
@@ -312,7 +316,8 @@ class SessionDatabase:
 
         # Sessions nettoyées
         if user_id:
-            cursor.execute('SELECT COUNT(*) as count FROM sessions WHERE status = ? AND user_id = ?', ('cleaned', user_id))
+            cursor.execute('SELECT COUNT(*) as count FROM sessions WHERE status = ? AND user_id = ?',
+                           ('cleaned', user_id))
         else:
             cursor.execute('SELECT COUNT(*) as count FROM sessions WHERE status = ?', ('cleaned',))
         cleaned_sessions = cursor.fetchone()['count']
