@@ -147,9 +147,10 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
   const proposeActions = (analysis) => {
     if (!analysis) return;
 
-    const missingCount = Object.values(analysis.missing_values || {}).reduce((a, b) => a + (b.count || 0), 0);
+    const missingCount = Object.values(analysis.missing_values || {}).reduce((a, b: any) => a + (b?.count || 0),0);
+
     const duplicates = analysis.duplicates || {};
-    const outliers = Object.values(analysis.outliers || {}).reduce((a, b) => a + b, 0);
+    const outliers = Object.values(analysis.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0),0);
 
     let textCorrections = 0, inconsistentCase = 0;
     for (let col in analysis.text_issues || {}) {
