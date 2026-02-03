@@ -38,10 +38,14 @@ app.register_blueprint(auth_bp, url_prefix="/api")
 
 
 
-
-UPLOAD_FOLDER = 'uploads'
-CLEANED_FOLDER = 'cleaned'
-#ALLOWED_EXTENSIONS = {'csv', 'json', 'xlsx', 'xls', 'xml'}
+# Utiliser /tmp sur Render (plan gratuit)
+if os.environ.get('RENDER'):
+    UPLOAD_FOLDER = '/tmp/uploads'
+    CLEANED_FOLDER = '/tmp/cleaned'
+else:
+    # En local
+    UPLOAD_FOLDER = 'uploads'
+    CLEANED_FOLDER = 'cleaned'
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CLEANED_FOLDER, exist_ok=True)
