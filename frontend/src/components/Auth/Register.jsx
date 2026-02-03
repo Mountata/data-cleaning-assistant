@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User, AlertCircle, CheckCircle, Sparkles } from 'lucide-react';
-
+import API_URL from '../config/api';
 const Register = ({ onRegister, onSwitchToLogin }) => {
   const [formData, setFormData] = useState({
     name: '',
@@ -39,7 +39,7 @@ const Register = ({ onRegister, onSwitchToLogin }) => {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:5000/api/register', {
+      const response = await fetch(`${API_URL}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

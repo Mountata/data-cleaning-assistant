@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User } from 'lucide-react';
-
+import API_URL from '../config/api';
 const DataCleaningAssistant = ({ user, onLogout }) => {
   const [sessionId, setSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -34,7 +34,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
 
   const loadSessions = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/sessions');
+      const res = await fetch(`${API_URL}/api/sessions`);
       const data = await res.json();
       if (res.ok) {
         setSessions(data.sessions || []);
@@ -52,7 +52,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       addMessage('bot', `🔄 Restauration de la session "${sessionData.filename}"...`);
 
       // Récupérer les détails complets de la session
-      const res = await fetch(`http://localhost:5000/api/session/${sessionData.session_id}`);
+      const res = await fetch(`${API_URL}/api/session/${sessionData.session_id}`);
 
       if (!res.ok) {
         addMessage('bot', '❌ Impossible de restaurer cette session.');
@@ -108,7 +108,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
 
     addMessage('bot', summary, 'results');
     addMessage('bot', {
-      downloadUrl: `http://localhost:5000/api/download/${sessionId}`,
+      downloadUrl: `${API_URL}/api/download/${sessionId}`,
       filename: results.cleaned_filename
     }, 'download');
   };
@@ -125,7 +125,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch('http://localhost:5000/api/upload', { method: 'POST', body: formData });
+      const res = await fetch('${API_URL}/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
 
@@ -193,7 +193,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     addMessage('bot', '🔧 Nettoyage en cours...', 'loading');
 
     try {
-      const res = await fetch('http://localhost:5000/api/clean', {
+      const res = await fetch('${API_URL}/api/clean', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, actions: selected })
@@ -237,7 +237,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     summary += `\n💾 Vos données nettoyées sont prêtes au téléchargement !`;
 
     addMessage('bot', summary, 'results');
-    addMessage('bot', { downloadUrl: `http://localhost:5000/api/download/${sessionId}`, filename: downloadFilename }, 'download');
+    addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sessionId}`, filename: downloadFilename }, 'download');
   };
 
   const viewData = async (type = 'before') => {
@@ -252,8 +252,8 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }
 
     const endpoint = type === 'before'
-      ? `http://localhost:5000/api/preview/${sessionId}`
-      : `http://localhost:5000/api/preview-cleaned/${sessionId}`;
+      ? `${API_URL}/api/preview/${sessionId}`
+      : `${API_URL}/api/preview-cleaned/${sessionId}`;
 
     try {
       const res = await fetch(endpoint);
