@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User } from 'lucide-react';
 import API_URL from '../config/api';
+
 const DataCleaningAssistant = ({ user, onLogout }) => {
   const [sessionId, setSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -14,6 +15,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
   const [previewType, setPreviewType] = useState('before');
   const [isRestoring, setIsRestoring] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [outlierMethod, setOutlierMethod] = useState('median');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -51,7 +53,6 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
 
       addMessage('bot', `🔄 Restauration de la session "${sessionData.filename}"...`);
 
-      // Récupérer les détails complets de la session
       const res = await fetch(`${API_URL}/api/session/${sessionData.session_id}`);
 
       if (!res.ok) {
@@ -69,7 +70,6 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       addMessage('bot', `✅ Session restaurée : ${sessionData.filename}`);
       addMessage('bot', `📊 ${fullSession.analysis.rows} lignes × ${fullSession.analysis.columns} colonnes`);
 
-      // Si la session a déjà été nettoyée
       if (sessionData.status === 'cleaned' && fullSession.cleaning_results) {
         setStep('results');
         displayRestoredResults(fullSession.cleaning_results);
@@ -97,11 +97,11 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     summary += `✅ Actions effectuées :\n`;
 
     if (res.duplicates_removed) {
-    summary += `• ${res.duplicates_removed.exact_duplicates_removed || 0} doublons exacts supprimés\n`;
-    summary += `• ${res.duplicates_removed.structural_duplicates_removed || 0} doublons structurels supprimés\n`;
+      summary += `• ${res.duplicates_removed.exact_duplicates_removed || 0} doublons exacts supprimés\n`;
+      summary += `• ${res.duplicates_removed.structural_duplicates_removed || 0} doublons structurels supprimés\n`;
     }
     if (res.missing_corrected) summary += `• ${res.missing_corrected} valeurs manquantes corrigées\n`;
-    if (res.outliers_removed) summary += `• ${res.outliers_removed} valeurs aberrantes supprimées\n`;
+    if (res.outliers_removed) summary += `• ${res.outliers_removed} valeurs aberrantes traitées\n`;
     if (res.text_normalized) summary += `• ${res.text_normalized} textes normalisés\n`;
 
     summary += `\n💡 Vous pouvez télécharger le fichier nettoyé ou refaire l'analyse.`;
@@ -147,10 +147,9 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
   const proposeActions = (analysis) => {
     if (!analysis) return;
 
-    const missingCount = Object.values(analysis.missing_values || {}).reduce((a, b: any) => a + (b?.count || 0),0);
-
+    const missingCount = Object.values(analysis.missing_values || {}).reduce((a, b) => a + (b?.count || 0), 0);
     const duplicates = analysis.duplicates || {};
-    const outliers = Object.values(analysis.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0),0);
+    const outliers = Object.values(analysis.outliers || {}).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0);
 
     let textCorrections = 0, inconsistentCase = 0;
     for (let col in analysis.text_issues || {}) {
@@ -165,13 +164,54 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }
 
     const actions = [
-      { id: 'duplicates',title: 'Supprimer les doublons',description: `${duplicates.exact_duplicates || 0} exacts + ${duplicates.structural_duplicates || 0} structurels détectés`,impact: `${(duplicates.exact_duplicates || 0) + (duplicates.structural_duplicates || 0)} lignes supprimées`
-, selected: false, risk: 'faible'  },
-      { id: 'missing_values', title: 'Corriger les valeurs manquantes', description: `${missingCount} valeurs manquantes détectées.`, impact: `${missingCount} cellules corrigées`, selected: false, risk: 'moyen' },
-      { id: 'outliers', title: 'Traiter les valeurs aberrantes', description: `${outliers} valeurs extrêmes détectées.`, impact: `${outliers} lignes supprimées`, selected: false, risk: 'élevé' },
-      { id: 'text_cleaning', title: 'Normaliser les textes', description: 'Suppression des emojis, caractères spéciaux et espaces inutiles.', impact: `${textCorrections} corrections`, selected: false, risk: 'faible' },
-      { id: 'date_format', title: 'Harmoniser les dates', description: `${dateFormatsCount} formats différents détectés.`, impact: 'Toutes les dates harmonisées', selected: false, risk: 'faible' },
-      { id: 'case_normalization', title: 'Uniformiser la casse', description: `${inconsistentCase} cellules avec des casses différentes.`, impact: `${inconsistentCase} corrections`, selected: false, risk: 'faible' }
+      {
+        id: 'duplicates',
+        title: 'Supprimer les doublons',
+        description: `${duplicates.exact_duplicates || 0} exacts + ${duplicates.structural_duplicates || 0} structurels détectés`,
+        impact: `${(duplicates.exact_duplicates || 0) + (duplicates.structural_duplicates || 0)} lignes supprimées`,
+        selected: false,
+        risk: 'faible'
+      },
+      {
+        id: 'missing_values',
+        title: 'Corriger les valeurs manquantes',
+        description: `${missingCount} valeurs manquantes détectées.`,
+        impact: `${missingCount} cellules corrigées`,
+        selected: false,
+        risk: 'moyen'
+      },
+      {
+        id: 'outliers',
+        title: 'Traiter les valeurs aberrantes',
+        description: `${outliers} valeurs extrêmes détectées.`,
+        impact: `Méthode configurable (voir options)`,
+        selected: false,
+        risk: 'moyen'
+      },
+      {
+        id: 'text_cleaning',
+        title: 'Normaliser les textes',
+        description: 'Suppression des emojis, caractères spéciaux et espaces inutiles.',
+        impact: `${textCorrections} corrections`,
+        selected: false,
+        risk: 'faible'
+      },
+      {
+        id: 'date_format',
+        title: 'Harmoniser les dates',
+        description: `${dateFormatsCount} formats différents détectés.`,
+        impact: 'Toutes les dates harmonisées',
+        selected: false,
+        risk: 'faible'
+      },
+      {
+        id: 'case_normalization',
+        title: 'Uniformiser la casse',
+        description: `${inconsistentCase} cellules avec des casses différentes.`,
+        impact: `${inconsistentCase} corrections`,
+        selected: false,
+        risk: 'faible'
+      }
     ];
 
     setCleaningActions(actions);
@@ -190,20 +230,27 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }
 
     addMessage('user', `✅ Actions sélectionnées : ${selected.join(', ')}`);
+    if (selected.includes('outliers')) {
+      addMessage('user', `🎯 Méthode outliers : ${outlierMethod}`);
+    }
     addMessage('bot', '🔧 Nettoyage en cours...', 'loading');
 
     try {
       const res = await fetch(`${API_URL}/api/clean`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, actions: selected })
+        body: JSON.stringify({
+          session_id: sessionId,
+          actions: selected,
+          outlier_method: outlierMethod
+        })
       });
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
 
       if (res.ok) {
         displayResults(data.results, data.download_filename);
-        loadSessions(); // Rafraîchir la liste des sessions
+        loadSessions();
       } else {
         addMessage('bot', `❌ Erreur : ${data.error || 'Nettoyage impossible'}`);
       }
@@ -224,14 +271,21 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     summary += `✅ Actions effectuées :\n`;
 
     const dup = results.duplicates_removed;
-
     if (dup) {
-        summary += `• ${dup.exact_duplicates_removed || 0} doublons exacts supprimés\n`;
-        summary += `• ${dup.structural_duplicates_removed || 0} doublons structurels supprimés\n`;
-        }
+      summary += `• ${dup.exact_duplicates_removed || 0} doublons exacts supprimés\n`;
+      summary += `• ${dup.structural_duplicates_removed || 0} doublons structurels supprimés\n`;
+    }
 
     if (results.missing_corrected) summary += `• ${results.missing_corrected} valeurs manquantes corrigées\n`;
-    if (results.outliers_removed) summary += `• ${results.outliers_removed} valeurs aberrantes supprimées\n`;
+
+    if (results.outliers_info) {
+      const info = results.outliers_info;
+      summary += `• ${info.total_outliers || 0} outliers traités (méthode: ${info.method_used})\n`;
+      if (info.rows_removed > 0) {
+        summary += `  → ${info.rows_removed} lignes supprimées\n`;
+      }
+    }
+
     if (results.text_normalized) summary += `• ${results.text_normalized} textes normalisés\n`;
 
     summary += `\n💾 Vos données nettoyées sont prêtes au téléchargement !`;
@@ -283,6 +337,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     setStep('upload');
     setShowPreview(false);
     setIsRestoring(false);
+    setOutlierMethod('median');
     addMessage('bot', `👋 Nouvelle session démarrée ${user?.name ? `${user.name}` : ''} ! Téléchargez votre fichier.`);
   };
 
@@ -308,6 +363,28 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       case 'cleaned': return { color: 'bg-green-100 text-green-700', text: 'Nettoyé' };
       case 'uploaded': return { color: 'bg-blue-100 text-blue-700', text: 'Analysé' };
       default: return { color: 'bg-gray-100 text-gray-700', text: 'En cours' };
+    }
+  };
+
+  const getMethodLabel = (method) => {
+    switch (method) {
+      case 'remove': return '🗑️ Supprimer les lignes';
+      case 'median': return '📊 Remplacer par la médiane';
+      case 'cap': return '🔒 Plafonner aux limites';
+      case 'nan': return '❓ Marquer comme manquant';
+      case 'flag': return '🏴 Ajouter un indicateur';
+      default: return method;
+    }
+  };
+
+  const getMethodDescription = (method) => {
+    switch (method) {
+      case 'remove': return '⚠️ Les lignes contenant des outliers seront supprimées (perte de données)';
+      case 'median': return '✅ RECOMMANDÉ : Les outliers seront remplacés par la médiane (conserve toutes les lignes)';
+      case 'cap': return '✅ Les outliers seront limités aux bornes acceptables';
+      case 'nan': return '⚠️ Les outliers seront remplacés par des valeurs manquantes';
+      case 'flag': return '✅ Une colonne "_is_outlier" sera ajoutée pour chaque colonne numérique';
+      default: return '';
     }
   };
 
@@ -459,8 +536,32 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
                           </div>
                         ))}
                       </div>
-                      <button onClick={executeActions} className="w-full mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors">
-                        ✨ Appliquer les actions
+
+                      {/* Sélecteur de méthode pour les outliers */}
+                      {cleaningActions.some(a => a.id === 'outliers' && a.selected) && (
+                        <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                          <label className="block text-sm font-semibold text-gray-800 mb-2">
+                            🎯 Méthode de traitement des valeurs aberrantes :
+                          </label>
+                          <select
+                            value={outlierMethod}
+                            onChange={(e) => setOutlierMethod(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                          >
+                            <option value="median">📊 Remplacer par la médiane (RECOMMANDÉ)</option>
+                            <option value="cap">🔒 Plafonner aux limites</option>
+                            <option value="flag">🏴 Ajouter un indicateur</option>
+                            <option value="nan">❓ Marquer comme manquant</option>
+                            <option value="remove">🗑️ Supprimer les lignes</option>
+                          </select>
+                          <p className="text-xs text-gray-700 mt-2 leading-relaxed">
+                            {getMethodDescription(outlierMethod)}
+                          </p>
+                        </div>
+                      )}
+
+                      <button onClick={executeActions} className="w-full mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors font-medium">
+                        ✨ Appliquer les actions sélectionnées
                       </button>
                     </div>
                   ) : msg.type === 'results' ? (
@@ -498,7 +599,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
         )}
       </div>
 
-      {/* Preview Modal avec barre de défilement */}
+      {/* Preview Modal */}
       {showPreview && previewData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-[95vw] w-full max-h-[95vh] flex flex-col">
@@ -514,7 +615,6 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
               </button>
             </div>
 
-            {/* Container avec scroll horizontal ET vertical */}
             <div className="flex-1 overflow-auto p-4" style={{ maxHeight: 'calc(95vh - 140px)' }}>
               <div className="inline-block min-w-full">
                 <table className="border-collapse border border-gray-300">

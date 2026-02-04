@@ -18,11 +18,9 @@ logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 
-
-
 SECRET_KEY = os.getenv("SECRET_KEY")
 app.config['SECRET_KEY'] = SECRET_KEY
-#CORS(app)
+# CORS(app)
 # Charger la configuration
 configclass = get_config()
 app.config.from_object(configclass)
@@ -31,12 +29,9 @@ CORS(app,
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-)
-
+     )
 
 app.register_blueprint(auth_bp, url_prefix="/api")
-
-
 
 # Utiliser /tmp sur Render (plan gratuit)
 if os.environ.get('RENDER'):
@@ -80,13 +75,10 @@ def convert_to_serializable(obj):
     return obj
 
 
-#def allowed_file(filename):
-#    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
 def allowed_file(filename):
     return (
-        '.' in filename and
-        filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+            '.' in filename and
+            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
     )
 
 
@@ -103,7 +95,7 @@ def load_file(filepath, file_extension):
                             filepath,
                             encoding=encoding,
                             sep=sep,
-                            on_bad_lines='skip'  # <-- IGNORE les lignes mal formatées
+                            on_bad_lines='skip'
                         )
                         if len(df.columns) > 1:
                             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
@@ -207,7 +199,6 @@ class DataAnalyzer:
         return missing
 
     @staticmethod
-
     def detect_duplicates(df, uniqueness_threshold=0.95):
         """
         Détecte les doublons exacts et structurels dans le DataFrame.
@@ -240,7 +231,6 @@ class DataAnalyzer:
             "structural_duplicates": structural_count,
             "used_columns": candidate_cols
         }
-
 
     @staticmethod
     def detect_outliers(df, column_types):
@@ -369,7 +359,6 @@ class DataCleaner:
 
         return df, duplicates_removed
 
-
     @staticmethod
     def handle_missing_values(df, column_types):
         corrected = 0
@@ -387,8 +376,26 @@ class DataCleaner:
         return df, int(corrected)
 
     @staticmethod
-    def remove_outliers(df, column_types):
+    def remove_outliers(df, column_types, method='median'):
+        """
+        Traite les valeurs aberrantes avec différentes stratégies.
+
+        Args:
+            df (pd.DataFrame): Le DataFrame à traiter
+            column_types (dict): Types des colonnes
+            method (str): Méthode de traitement
+                - 'remove': Supprimer les lignes
+                - 'median': Remplacer par la médiane (par défaut - RECOMMANDÉ)
+                - 'cap': Plafonner aux limites IQR
+                - 'nan': Remplacer par NaN
+                - 'flag': Marquer avec une colonne booléenne
+
+        Returns:
+            tuple: (DataFrame traité, dict des résultats)
+        """
         initial = len(df)
+        outliers_info = {}
+
         for col in df.columns:
             if column_types.get(col) == 'numeric':
                 Q1 = df[col].quantile(0.25)
@@ -396,8 +403,36 @@ class DataCleaner:
                 IQR = Q3 - Q1
                 lower = Q1 - 1.5 * IQR
                 upper = Q3 + 1.5 * IQR
-                df = df[(df[col] >= lower) & (df[col] <= upper)]
-        return df, int(initial - len(df))
+
+                # Identifier les outliers
+                mask = (df[col] < lower) | (df[col] > upper)
+                count = mask.sum()
+
+                if count > 0:
+                    outliers_info[col] = int(count)
+
+                    if method == 'remove':
+                        df = df[~mask]  # Suppression des lignes
+
+                    elif method == 'median':
+                        median = df[col].median()
+                        df.loc[mask, col] = median  # Remplacement par médiane
+
+                    elif method == 'cap':
+                        df[col] = df[col].clip(lower=lower, upper=upper)  # Plafonnement
+
+                    elif method == 'nan':
+                        df.loc[mask, col] = np.nan  # Marquage comme manquant
+
+                    elif method == 'flag':
+                        df[f'{col}_is_outlier'] = mask  # Nouvelle colonne booléenne
+
+        return df, {
+            'outliers_detected': outliers_info,
+            'rows_removed': int(initial - len(df)) if method == 'remove' else 0,
+            'method_used': method,
+            'total_outliers': sum(outliers_info.values()) if outliers_info else 0
+        }
 
     @staticmethod
     def clean_text(df, column_types):
@@ -439,7 +474,16 @@ class DataCleaner:
         return df, int(corrections)
 
     @staticmethod
-    def apply_cleaning(df, actions, column_types):
+    def apply_cleaning(df, actions, column_types, outlier_method='median'):
+        """
+        Applique les actions de nettoyage sélectionnées.
+
+        Args:
+            df: DataFrame à nettoyer
+            actions: Liste des actions à appliquer
+            column_types: Types des colonnes
+            outlier_method: Méthode pour traiter les outliers (défaut: 'median')
+        """
         results = {'initial_rows': int(len(df)), 'actions_performed': []}
 
         if 'duplicates' in actions:
@@ -453,9 +497,10 @@ class DataCleaner:
             results['actions_performed'].append('Correction des valeurs manquantes')
 
         if 'outliers' in actions:
-            df, removed = DataCleaner.remove_outliers(df, column_types)
-            results['outliers_removed'] = removed
-            results['actions_performed'].append('Suppression des valeurs aberrantes')
+            df, outlier_results = DataCleaner.remove_outliers(df, column_types, method=outlier_method)
+            results['outliers_removed'] = outlier_results['rows_removed']
+            results['outliers_info'] = outlier_results
+            results['actions_performed'].append(f'Traitement des outliers ({outlier_results["method_used"]})')
 
         if 'text_cleaning' in actions:
             df, corrections = DataCleaner.clean_text(df, column_types)
@@ -607,6 +652,7 @@ def clean_data():
         data = request.json
         session_id = data.get('session_id')
         actions = data.get('actions', [])
+        outlier_method = data.get('outlier_method', 'median')  # Par défaut: median (recommandé)
 
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
@@ -615,7 +661,12 @@ def clean_data():
         df = session['dataframe'].copy()
         column_types = session['analysis']['column_types']
 
-        cleaned_df, results = DataCleaner.apply_cleaning(df, actions, column_types)
+        cleaned_df, results = DataCleaner.apply_cleaning(
+            df,
+            actions,
+            column_types,
+            outlier_method=outlier_method
+        )
 
         cleaned_filename = f"cleaned_{session['filename']}"
         cleaned_filepath = os.path.join(app.config['CLEANED_FOLDER'], f"{session_id}_{cleaned_filename}")
@@ -625,7 +676,7 @@ def clean_data():
         session['cleaned_filename'] = cleaned_filename
         session['cleaned_dataframe'] = cleaned_df
         session['cleaning_results'] = results
-        session['status'] = 'cleaned'  # ← AJOUT DU STATUT
+        session['status'] = 'cleaned'
 
         return jsonify({
             'session_id': session_id,
@@ -720,7 +771,8 @@ def get_sessions():
             'filename': session['filename'],
             'timestamp': session['timestamp'],
             'rows': session['analysis']['rows'],
-            'columns': session['analysis']['columns']
+            'columns': session['analysis']['columns'],
+            'status': session.get('status', 'uploaded')
         })
     return jsonify({'sessions': sessions_list}), 200
 
