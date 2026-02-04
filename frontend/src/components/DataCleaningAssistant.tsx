@@ -2,23 +2,72 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User, AlertCircle } from 'lucide-react';
 import API_URL from '../config/api';
 
-const DataCleaningAssistant = ({ user, onLogout }) => {
-  const [sessionId, setSessionId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [currentFile, setCurrentFile] = useState(null);
-  const [analysisData, setAnalysisData] = useState(null);
-  const [cleaningActions, setCleaningActions] = useState([]);
-  const [step, setStep] = useState('upload');
-  const [sessions, setSessions] = useState([]);
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewData, setPreviewData] = useState(null);
-  const [previewType, setPreviewType] = useState('before');
-  const [isRestoring, setIsRestoring] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [outlierMethod, setOutlierMethod] = useState('median');
-  const [hoveredCell, setHoveredCell] = useState(null);
-  const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
+// Types TypeScript
+interface User {
+  name?: string;
+  email?: string;
+}
+
+interface Message {
+  sender: 'user' | 'bot';
+  content: any;
+  type: string;
+  timestamp: Date;
+}
+
+interface Session {
+  session_id: string;
+  filename: string;
+  status: string;
+  timestamp: string;
+  rows: number;
+  columns: number;
+}
+
+interface CleaningAction {
+  id: string;
+  title: string;
+  description: string;
+  impact: string;
+  selected: boolean;
+  risk: 'faible' | 'moyen' | 'élevé';
+}
+
+interface CellIssue {
+  type: string;
+  severity: string;
+  label: string;
+  description: string;
+  color: string;
+}
+
+interface HoveredCell {
+  row: number;
+  col: number;
+}
+
+interface Props {
+  user: User;
+  onLogout: () => void;
+}
+
+const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [currentFile, setCurrentFile] = useState<any>(null);
+  const [analysisData, setAnalysisData] = useState<any>(null);
+  const [cleaningActions, setCleaningActions] = useState<CleaningAction[]>([]);
+  const [step, setStep] = useState<string>('upload');
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [showPreview, setShowPreview] = useState<boolean>(false);
+  const [previewData, setPreviewData] = useState<any>(null);
+  const [previewType, setPreviewType] = useState<'before' | 'after'>('before');
+  const [isRestoring, setIsRestoring] = useState<boolean>(false);
+  const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  const [outlierMethod, setOutlierMethod] = useState<string>('median');
+  const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -31,7 +80,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     loadSessions();
   }, []);
 
-  const addMessage = (sender, content, type = 'text') => {
+  const addMessage = (sender: 'user' | 'bot', content: any, type: string = 'text') => {
     setMessages(prev => [...prev, { sender, content, type, timestamp: new Date() }]);
   };
 
@@ -47,7 +96,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }
   };
 
-  const restoreSession = async (sessionData) => {
+  const restoreSession = async (sessionData: Session) => {
     try {
       setIsRestoring(true);
       setMessages([]);
@@ -82,12 +131,12 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       setIsRestoring(false);
     } catch (err) {
       console.error('Erreur restauration:', err);
-      addMessage('bot', `❌ Erreur : ${err.message}`);
+      addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
       setIsRestoring(false);
     }
   };
 
-  const displayRestoredResults = (results) => {
+  const displayRestoredResults = (results: any) => {
     if (!results || !results.results) return;
 
     const res = results.results;
@@ -114,8 +163,8 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }, 'download');
   };
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
 
     setCurrentFile(file);
@@ -141,16 +190,19 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
-      addMessage('bot', `❌ Erreur lors de l'envoi du fichier : ${err.message}`);
+      addMessage('bot', `❌ Erreur lors de l'envoi du fichier : ${(err as Error).message}`);
     }
   };
 
-  const proposeActions = (analysis) => {
+  const proposeActions = (analysis: any) => {
     if (!analysis) return;
 
-    const missingCount = Object.values(analysis.missing_values || {}).reduce((a, b) => a + (b?.count || 0), 0);
+    // CORRECTION 1: Typage explicite pour missing_values
+    const missingCount = Object.values<any>(analysis.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0);
     const duplicates = analysis.duplicates || {};
-    const outliers = Object.values(analysis.outliers || {}).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0);
+
+    // CORRECTION 2: Typage explicite pour outliers
+    const outliers = Object.values<any>(analysis.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0), 0);
 
     let textCorrections = 0, inconsistentCase = 0;
     for (let col in analysis.text_issues || {}) {
@@ -164,7 +216,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       dateFormatsCount += Math.max(0, (analysis.date_formats[col]?.length || 0) - 1);
     }
 
-    const actions = [
+    const actions: CleaningAction[] = [
       {
         id: 'duplicates',
         title: 'Supprimer les doublons',
@@ -219,7 +271,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     addMessage('bot', `🎯 Actions recommandées : ${actions.length} types de corrections possibles.`, 'actions');
   };
 
-  const toggleAction = (actionId) => {
+  const toggleAction = (actionId: string) => {
     setCleaningActions(prev => prev.map(a => a.id === actionId ? { ...a, selected: !a.selected } : a));
   };
 
@@ -257,11 +309,11 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       }
     } catch (err) {
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
-      addMessage('bot', `❌ Erreur : ${err.message}`);
+      addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
     }
   };
 
-  const displayResults = (results, downloadFilename) => {
+  const displayResults = (results: any, downloadFilename: string) => {
     if (!results) return;
     setStep('results');
 
@@ -296,10 +348,10 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
   };
 
   // Fonction pour détecter les problèmes dans une cellule
-  const getCellIssues = (value, colName, rowIdx) => {
+  const getCellIssues = (value: any, colName: string, rowIdx: number): CellIssue[] => {
     if (!analysisData) return [];
 
-    const issues = [];
+    const issues: CellIssue[] = [];
 
     // Vérifier les valeurs manquantes
     if (value === null || value === undefined || value === '') {
@@ -400,7 +452,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     return issues;
   };
 
-  const viewData = async (type = 'before') => {
+  const viewData = async (type: 'before' | 'after' = 'before') => {
     if (!sessionId) {
       addMessage('bot', '⚠️ Aucune session active.');
       return;
@@ -430,7 +482,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
       setShowPreview(true);
     } catch (err) {
       console.error('Preview error:', err);
-      addMessage('bot', `❌ Erreur de connexion : ${err.message}`);
+      addMessage('bot', `❌ Erreur de connexion : ${(err as Error).message}`);
     }
   };
 
@@ -455,7 +507,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     addMessage('bot', '🔄 Vous pouvez maintenant modifier les actions et relancer le nettoyage.');
   };
 
-  const getRiskBadge = (risk) => {
+  const getRiskBadge = (risk: string) => {
     switch (risk) {
       case 'faible': return 'bg-green-100 text-green-700';
       case 'moyen': return 'bg-yellow-100 text-yellow-700';
@@ -464,7 +516,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case 'cleaned': return { color: 'bg-green-100 text-green-700', text: 'Nettoyé' };
       case 'uploaded': return { color: 'bg-blue-100 text-blue-700', text: 'Analysé' };
@@ -472,18 +524,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
     }
   };
 
-  const getMethodLabel = (method) => {
-    switch (method) {
-      case 'remove': return '🗑️ Supprimer les lignes';
-      case 'median': return '📊 Remplacer par la médiane';
-      case 'cap': return '🔒 Plafonner aux limites';
-      case 'nan': return '❓ Marquer comme manquant';
-      case 'flag': return '🏴 Ajouter un indicateur';
-      default: return method;
-    }
-  };
-
-  const getMethodDescription = (method) => {
+  const getMethodDescription = (method: string) => {
     switch (method) {
       case 'remove': return '⚠️ Les lignes contenant des outliers seront supprimées (perte de données)';
       case 'median': return '✅ RECOMMANDÉ : Les outliers seront remplacés par la médiane (conserve toutes les lignes)';
@@ -736,7 +777,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
                       <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 bg-gray-100 sticky left-0 z-20">
                         #
                       </th>
-                      {previewData.columns.map((col, i) => (
+                      {previewData.columns.map((col: string, i: number) => (
                         <th key={i} className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
                           {col}
                         </th>
@@ -744,12 +785,12 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {previewData.rows.map((row, rowIdx) => (
+                    {previewData.rows.map((row: any[], rowIdx: number) => (
                       <tr key={rowIdx} className="hover:bg-gray-50 transition-colors">
                         <td className="border border-gray-300 px-3 py-2 text-xs text-gray-500 bg-gray-50 sticky left-0 z-10 font-medium">
                           {rowIdx + 1}
                         </td>
-                        {row.map((cell, cellIdx) => {
+                        {row.map((cell: any, cellIdx: number) => {
                           const colName = previewData.columns[cellIdx];
                           const issues = previewType === 'before' ? getCellIssues(cell, colName, rowIdx) : [];
                           const hasIssues = issues.length > 0;
