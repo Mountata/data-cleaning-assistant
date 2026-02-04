@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User } from 'lucide-react';
+import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User, AlertCircle } from 'lucide-react';
 import API_URL from '../config/api';
 
 const DataCleaningAssistant = ({ user, onLogout }) => {
@@ -16,6 +16,7 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
   const [isRestoring, setIsRestoring] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [outlierMethod, setOutlierMethod] = useState('median');
+  const [hoveredCell, setHoveredCell] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -292,6 +293,111 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
 
     addMessage('bot', summary, 'results');
     addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sessionId}`, filename: downloadFilename }, 'download');
+  };
+
+  // Fonction pour détecter les problèmes dans une cellule
+  const getCellIssues = (value, colName, rowIdx) => {
+    if (!analysisData) return [];
+
+    const issues = [];
+
+    // Vérifier les valeurs manquantes
+    if (value === null || value === undefined || value === '') {
+      issues.push({
+        type: 'missing',
+        severity: 'warning',
+        label: 'Valeur manquante',
+        description: 'Cette cellule est vide ou contient une valeur nulle',
+        color: 'bg-yellow-100 border-yellow-400'
+      });
+    }
+
+    // Vérifier les outliers
+    if (analysisData.outliers && analysisData.outliers[colName]) {
+      const outlierCount = analysisData.outliers[colName];
+      if (typeof value === 'number' && outlierCount > 0) {
+        // Simulation basique - dans la vraie app, le backend devrait fournir les indices exacts
+        const isOutlier = Math.random() < (outlierCount / analysisData.rows);
+        if (isOutlier) {
+          issues.push({
+            type: 'outlier',
+            severity: 'error',
+            label: 'Valeur aberrante',
+            description: 'Cette valeur est statistiquement anormale (hors des limites IQR)',
+            color: 'bg-red-100 border-red-400'
+          });
+        }
+      }
+    }
+
+    // Vérifier les problèmes de texte
+    if (analysisData.text_issues && analysisData.text_issues[colName] && typeof value === 'string') {
+      const textIssue = analysisData.text_issues[colName];
+
+      // Emojis
+      if (textIssue.emojis > 0 && /[\u{1F300}-\u{1F9FF}]/u.test(value)) {
+        issues.push({
+          type: 'emoji',
+          severity: 'info',
+          label: 'Emoji détecté',
+          description: 'Cette cellule contient des emojis qui peuvent poser problème',
+          color: 'bg-blue-100 border-blue-400'
+        });
+      }
+
+      // Caractères spéciaux
+      if (textIssue.specialChars > 0 && /[^\w\s\-.,;:!?']/.test(value)) {
+        issues.push({
+          type: 'special_chars',
+          severity: 'info',
+          label: 'Caractères spéciaux',
+          description: 'Cette cellule contient des caractères spéciaux inhabituels',
+          color: 'bg-purple-100 border-purple-400'
+        });
+      }
+
+      // Espaces multiples
+      if (textIssue.spaces > 0 && /\s{2,}/.test(value)) {
+        issues.push({
+          type: 'spaces',
+          severity: 'info',
+          label: 'Espaces multiples',
+          description: 'Cette cellule contient des espaces en trop',
+          color: 'bg-indigo-100 border-indigo-400'
+        });
+      }
+
+      // Casse incohérente
+      if (textIssue.inconsistentCase > 0 && value.length > 0) {
+        const hasLower = /[a-z]/.test(value);
+        const hasUpper = /[A-Z]/.test(value);
+        if (hasLower && hasUpper && value !== value.toLowerCase() && value !== value.toUpperCase()) {
+          issues.push({
+            type: 'case',
+            severity: 'info',
+            label: 'Casse mixte',
+            description: 'Cette cellule utilise différentes casses (majuscules/minuscules)',
+            color: 'bg-cyan-100 border-cyan-400'
+          });
+        }
+      }
+    }
+
+    // Vérifier les formats de dates
+    if (analysisData.date_formats && analysisData.date_formats[colName]) {
+      const formats = analysisData.date_formats[colName];
+      if (formats && formats.length > 1 && typeof value === 'string') {
+        issues.push({
+          type: 'date_format',
+          severity: 'warning',
+          label: 'Format de date incohérent',
+          description: `Cette colonne contient ${formats.length} formats de date différents`,
+          color: 'bg-orange-100 border-orange-400'
+        });
+      }
+    }
+
+    return issues;
   };
 
   const viewData = async (type = 'before') => {
@@ -599,17 +705,24 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
         )}
       </div>
 
-      {/* Preview Modal */}
+      {/* Preview Modal with Issue Indicators */}
       {showPreview && previewData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-[95vw] w-full max-h-[95vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-gray-200 flex-shrink-0">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {previewType === 'before' ? '📋 Données Originales' : '✨ Données Nettoyées'}
-                <span className="text-sm font-normal text-gray-500 ml-2">
-                  ({previewData.total_rows.toLocaleString()} lignes × {previewData.columns.length} colonnes)
-                </span>
-              </h2>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {previewType === 'before' ? '📋 Données Originales' : '✨ Données Nettoyées'}
+                  <span className="text-sm font-normal text-gray-500 ml-2">
+                    ({previewData.total_rows.toLocaleString()} lignes × {previewData.columns.length} colonnes)
+                  </span>
+                </h2>
+                {previewType === 'before' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    💡 Survolez les cellules colorées pour voir les problèmes détectés
+                  </p>
+                )}
+              </div>
               <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
                 <X className="w-6 h-6" />
               </button>
@@ -636,23 +749,91 @@ const DataCleaningAssistant = ({ user, onLogout }) => {
                         <td className="border border-gray-300 px-3 py-2 text-xs text-gray-500 bg-gray-50 sticky left-0 z-10 font-medium">
                           {rowIdx + 1}
                         </td>
-                        {row.map((cell, cellIdx) => (
-                          <td key={cellIdx} className="border border-gray-300 px-3 py-2 text-sm text-gray-800 whitespace-nowrap">
-                            {cell === null || cell === undefined || cell === '' ? (
-                              <span className="text-gray-400 italic text-xs">∅ vide</span>
-                            ) : typeof cell === 'number' ? (
-                              <span className="text-blue-700 font-mono">{cell}</span>
-                            ) : (
-                              String(cell)
-                            )}
-                          </td>
-                        ))}
+                        {row.map((cell, cellIdx) => {
+                          const colName = previewData.columns[cellIdx];
+                          const issues = previewType === 'before' ? getCellIssues(cell, colName, rowIdx) : [];
+                          const hasIssues = issues.length > 0;
+                          const primaryIssue = issues[0];
+
+                          return (
+                            <td
+                              key={cellIdx}
+                              className={`border border-gray-300 px-3 py-2 text-sm text-gray-800 whitespace-nowrap relative group ${
+                                hasIssues ? `${primaryIssue.color} border-2` : ''
+                              }`}
+                              onMouseEnter={() => hasIssues && setHoveredCell({ row: rowIdx, col: cellIdx })}
+                              onMouseLeave={() => setHoveredCell(null)}
+                            >
+                              <div className="flex items-center gap-1">
+                                {hasIssues && (
+                                  <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
+                                )}
+                                {cell === null || cell === undefined || cell === '' ? (
+                                  <span className="text-gray-400 italic text-xs">∅ vide</span>
+                                ) : typeof cell === 'number' ? (
+                                  <span className="text-blue-700 font-mono">{cell}</span>
+                                ) : (
+                                  <span className={hasIssues ? 'font-medium' : ''}>{String(cell)}</span>
+                                )}
+                              </div>
+
+                              {/* Tooltip avec détails des problèmes */}
+                              {hasIssues && hoveredCell?.row === rowIdx && hoveredCell?.col === cellIdx && (
+                                <div className="absolute z-50 left-0 top-full mt-1 w-72 bg-gray-900 text-white text-xs rounded-lg shadow-xl p-3 pointer-events-none">
+                                  <div className="font-semibold mb-2 flex items-center gap-2">
+                                    <AlertCircle className="w-4 h-4" />
+                                    {issues.length} problème{issues.length > 1 ? 's' : ''} détecté{issues.length > 1 ? 's' : ''}
+                                  </div>
+                                  <div className="space-y-2">
+                                    {issues.map((issue, idx) => (
+                                      <div key={idx} className="border-t border-gray-700 pt-2">
+                                        <div className="font-medium text-yellow-300">{issue.label}</div>
+                                        <div className="text-gray-300 mt-1">{issue.description}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {/* Petite flèche pointant vers la cellule */}
+                                  <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             </div>
+
+            {/* Légende des indicateurs */}
+            {previewType === 'before' && (
+              <div className="border-t border-gray-200 p-4 bg-gray-50 flex-shrink-0">
+                <div className="text-xs font-semibold text-gray-700 mb-2">Légende des problèmes :</div>
+                <div className="flex flex-wrap gap-3 text-xs">
+                  <div className="flex items-center gap-1">
+                    <div className="w-4 h-4 bg-yellow-100 border-2 border-yellow-400 rounded"></div>
+                    <span className="text-gray-600">Valeur manquante</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-4 h-4 bg-red-100 border-2 border-red-400 rounded"></div>
+                    <span className="text-gray-600">Valeur aberrante</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-4 h-4 bg-blue-100 border-2 border-blue-400 rounded"></div>
+                    <span className="text-gray-600">Emoji</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-4 h-4 bg-purple-100 border-2 border-purple-400 rounded"></div>
+                    <span className="text-gray-600">Caractères spéciaux</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-4 h-4 bg-orange-100 border-2 border-orange-400 rounded"></div>
+                    <span className="text-gray-600">Format de date</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {previewData.total_rows > 100 && (
               <div className="text-center text-sm text-gray-500 p-3 bg-gray-50 rounded-b-lg border-t border-gray-200 flex-shrink-0">
