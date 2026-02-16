@@ -1029,37 +1029,46 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                       <Download className="w-4 h-4" /> Télécharger {msg.content.filename}
                     </button>
                   ): msg.type === 'download-report' ? (
-                          <button
-                            onClick={async () => {
-                              try {
-                                const response = await fetch(`${API_URL}/api/download-report/${msg.content.sessionId}`);
+                      <button
+                        onClick={async () => {
+                          try {
+                            // Utiliser sessionId de l'état global si msg.content.sessionId est undefined
+                            const id = msg.content.sessionId || sessionId;
 
-                                if (!response.ok) {
-                                  const error = await response.json();
-                                  throw new Error(error.error || 'Erreur téléchargement');
-                                }
+                            if (!id) {
+                              addMessage('bot', '❌ Session ID manquant');
+                              return;
+                            }
 
-                                // Récupérer le blob
-                                const blob = await response.blob();
-                                const url = window.URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = msg.content.filename || `rapport_${msg.content.sessionId}.docx`;
-                                document.body.appendChild(a);
-                                a.click();
-                                window.URL.revokeObjectURL(url);
-                                document.body.removeChild(a);
+                            const response = await fetch(`${API_URL}/api/download-report/${id}`);
 
-                                addMessage('bot', `✅ Rapport téléchargé avec succès !`);
-                              } catch (error) {
-                                console.error('Erreur téléchargement:', error);
-                                addMessage('bot', `❌ Erreur : ${error.message}`);
-                              }
-                            }}
-                            className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors"
-                          >
-                            <Download className="w-4 h-4" /> Télécharger le rapport
-                          </button>
+                            if (!response.ok) {
+                              const error = await response.json();
+                              throw new Error(error.error || 'Erreur téléchargement');
+                            }
+
+                            // Récupérer le blob
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = msg.content.filename || `rapport_${id}.docx`;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+
+                            addMessage('bot', `✅ Rapport téléchargé avec succès !`);
+                          } catch (error) {
+                            console.error('Erreur téléchargement:', error);
+                            addMessage('bot', `❌ Erreur : ${error.message}`);
+                          }
+                        }}
+                        className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors"
+                      >
+                        <Download className="w-4 h-4" /> Télécharger le rapport
+                      </button>
+                    )
 
                   ) : (
                     <div className="whitespace-pre-line text-gray-800">{msg.content}</div>
