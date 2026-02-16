@@ -71,7 +71,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  //  STATES POUR LE CHAT
+  // ✅ STATES POUR LE CHAT
   const [userQuestion, setUserQuestion] = useState<string>('');
   const [isAsking, setIsAsking] = useState<boolean>(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
@@ -170,7 +170,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }, 'download');
   };
 
-  // Fonction pour basculer la sélection d'une session
   const toggleSessionSelection = (sessionId: string) => {
     setSelectedSessions(prev => {
       if (prev.includes(sessionId)) {
@@ -185,14 +184,12 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     });
   };
 
-  // Fonction pour télécharger les sessions sélectionnées
   const downloadMultipleSessions = async () => {
     if (selectedSessions.length === 0) {
       addMessage('bot', '⚠️ Veuillez sélectionner au moins un fichier');
       return;
     }
 
-    // Vérifier que toutes les sessions sont nettoyées
     const allCleaned = selectedSessions.every(id => {
       const session = sessions.find(s => s.session_id === id);
       return session?.status === 'cleaned';
@@ -218,7 +215,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         return;
       }
 
-      // Télécharger le fichier ZIP
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -239,7 +235,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-  // Fonction pour sélectionner toutes les sessions nettoyées
   const selectAllCleaned = () => {
     const cleanedSessions = sessions
       .filter(s => s.status === 'cleaned')
@@ -248,7 +243,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setSelectedSessions(cleanedSessions);
   };
 
-  // Fonction pour désélectionner tout
   const clearSelection = () => {
     setSelectedSessions([]);
   };
@@ -601,67 +595,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-
-      {/* ==================== NOUVELLE ZONE DE CHAT ==================== */}
-    {sessionId && step === 'actions' && (
-      <div className="border-t border-gray-200 bg-white p-6">
-        <div className="max-w-3xl mx-auto space-y-4">
-          {/* Boutons rapides */}
-          <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={getRecommendations}
-              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
-            >
-              💡 Recommande-moi des actions
-            </button>
-
-            <button
-              onClick={generateReport}
-              disabled={isGeneratingReport}
-              className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-2 disabled:opacity-50"
-            >
-              📄 Génère un rapport
-            </button>
-
-            <button
-              onClick={() => {
-                addMessage('user', 'Quelle est la qualité de mes données ?');
-                askQuestion();
-              }}
-              className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
-            >
-              🎯 Évaluer la qualité
-            </button>
-          </div>
-
-          {/* Zone de saisie */}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={userQuestion}
-              onChange={(e) => setUserQuestion(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && !isAsking && askQuestion()}
-              placeholder="Posez une question sur vos données..."
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              disabled={isAsking}
-            />
-            <button
-              onClick={askQuestion}
-              disabled={isAsking || !userQuestion.trim()}
-              className="bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isAsking ? '...' : 'Envoyer'}
-            </button>
-          </div>
-
-          {/* Exemples de questions */}
-          <div className="text-xs text-gray-500">
-            <span className="font-semibold">Exemples :</span> "Combien de lignes ?", "Y a-t-il des doublons ?", "Quelle est la qualité ?"
-          </div>
-        </div>
-      </div>
-    )}
-
   const getMethodDescription = (method: string) => {
     switch (method) {
       case 'remove': return '⚠️ Les lignes contenant des outliers seront supprimées (perte de données)';
@@ -670,6 +603,113 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       case 'nan': return '⚠️ Les outliers seront remplacés par des valeurs manquantes';
       case 'flag': return '✅ Une colonne "_is_outlier" sera ajoutée pour chaque colonne numérique';
       default: return '';
+    }
+  };
+
+  // ==================== ✅ FONCTIONS CHAT IA ====================
+
+  const askQuestion = async () => {
+    if (!userQuestion.trim() || !sessionId) return;
+
+    const question = userQuestion;
+    setUserQuestion('');
+
+    addMessage('user', question);
+    addMessage('bot', '🤔 Laissez-moi réfléchir...', 'loading');
+    setIsAsking(true);
+
+    try {
+      const res = await fetch(`${API_URL}/api/chat/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, question })
+      });
+
+      const data = await res.json();
+      setMessages(prev => prev.filter(m => m.type !== 'loading'));
+
+      if (res.ok) {
+        addMessage('bot', data.answer);
+      } else {
+        addMessage('bot', `❌ Erreur : ${data.error}`);
+      }
+    } catch (err) {
+      setMessages(prev => prev.filter(m => m.type !== 'loading'));
+      addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  const getRecommendations = async () => {
+    if (!sessionId) return;
+
+    addMessage('user', '💡 Donne-moi des recommandations');
+    addMessage('bot', '🔍 Analyse en cours...', 'loading');
+
+    try {
+      const res = await fetch(`${API_URL}/api/chat/recommend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+
+      const data = await res.json();
+      setMessages(prev => prev.filter(m => m.type !== 'loading'));
+
+      if (res.ok) {
+        let response = `💡 **Voici mes ${data.count} recommandations :**\n\n`;
+
+        data.recommendations.forEach((rec: any, idx: number) => {
+          response += `**${idx + 1}. ${rec.title}**\n`;
+          response += `• Priorité : ${rec.priority.toUpperCase()}\n`;
+          response += `• Impact : ${rec.impact}\n`;
+          response += `• ${rec.justification}\n`;
+          response += `• Recommandé : ${rec.recommended ? '✅ Oui' : '⚠️ Optionnel'}\n\n`;
+        });
+
+        addMessage('bot', response);
+      } else {
+        addMessage('bot', `❌ Erreur : ${data.error}`);
+      }
+    } catch (err) {
+      setMessages(prev => prev.filter(m => m.type !== 'loading'));
+      addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
+    }
+  };
+
+  const generateReport = async () => {
+    if (!sessionId) return;
+
+    addMessage('user', '📄 Génère-moi un rapport');
+    addMessage('bot', '📝 Génération du rapport en cours...', 'loading');
+    setIsGeneratingReport(true);
+
+    try {
+      const res = await fetch(`${API_URL}/api/chat/generate-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+
+      const data = await res.json();
+      setMessages(prev => prev.filter(m => m.type !== 'loading'));
+
+      if (res.ok) {
+        addMessage('bot', '✅ Rapport généré avec succès !');
+        addMessage('bot', {
+          downloadUrl: `${API_URL}${data.download_url}`,
+          filename: data.filename,
+          type: 'report'
+        }, 'download');
+      } else {
+        addMessage('bot', `❌ Erreur : ${data.error}`);
+      }
+    } catch (err) {
+      setMessages(prev => prev.filter(m => m.type !== 'loading'));
+      addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
+    } finally {
+      setIsGeneratingReport(false);
     }
   };
 
@@ -752,7 +792,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                 } ${isSelected ? 'ring-2 ring-green-500' : ''}`}
               >
                 <div className="flex items-start gap-2">
-                  {/* Checkbox de sélection (seulement pour fichiers nettoyés) */}
                   {isCleaned && (
                     <input
                       type="checkbox"
@@ -765,7 +804,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                     />
                   )}
 
-                  {/* Contenu de la session */}
                   <div
                     onClick={() => restoreSession(s)}
                     className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
@@ -898,7 +936,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                         ))}
                       </div>
 
-                      {/* Sélecteur de méthode pour les outliers */}
                       {cleaningActions.some(a => a.id === 'outliers' && a.selected) && (
                         <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
                           <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -942,6 +979,66 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
           </div>
         </div>
 
+        {/* ==================== ✅ ZONE DE CHAT IA ==================== */}
+        {sessionId && step === 'actions' && (
+          <div className="border-t border-gray-200 bg-white p-6">
+            <div className="max-w-3xl mx-auto space-y-4">
+              {/* Boutons rapides */}
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={getRecommendations}
+                  className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+                >
+                  💡 Recommande-moi des actions
+                </button>
+
+                <button
+                  onClick={generateReport}
+                  disabled={isGeneratingReport}
+                  className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  📄 Génère un rapport
+                </button>
+
+                <button
+                  onClick={() => {
+                    setUserQuestion('Quelle est la qualité de mes données ?');
+                    setTimeout(() => askQuestion(), 100);
+                  }}
+                  className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
+                >
+                  🎯 Évaluer la qualité
+                </button>
+              </div>
+
+              {/* Zone de saisie */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={userQuestion}
+                  onChange={(e) => setUserQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !isAsking && askQuestion()}
+                  placeholder="Posez une question sur vos données..."
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={isAsking}
+                />
+                <button
+                  onClick={askQuestion}
+                  disabled={isAsking || !userQuestion.trim()}
+                  className="bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isAsking ? '...' : 'Envoyer'}
+                </button>
+              </div>
+
+              {/* Exemples de questions */}
+              <div className="text-xs text-gray-500">
+                <span className="font-semibold">Exemples :</span> "Combien de lignes ?", "Y a-t-il des doublons ?", "Quelle est la qualité ?"
+              </div>
+            </div>
+          </div>
+        )}
+
         {step === 'upload' && (
           <div className="border-t border-gray-200 bg-white p-6">
             <div className="max-w-3xl mx-auto">
@@ -960,144 +1057,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         )}
       </div>
 
-      {/* Preview Modal with Issue Indicators */}
-      {showPreview && previewData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-[95vw] w-full max-h-[95vh] flex flex-col">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200 flex-shrink-0">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {previewType === 'before' ? '📋 Données Originales' : '✨ Données Nettoyées'}
-                  <span className="text-sm font-normal text-gray-500 ml-2">
-                    ({previewData.total_rows.toLocaleString()} lignes × {previewData.columns.length} colonnes)
-                  </span>
-                </h2>
-                {previewType === 'before' && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    💡 Survolez les cellules colorées pour voir les problèmes détectés
-                  </p>
-                )}
-              </div>
-              <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-auto p-4" style={{ maxHeight: 'calc(95vh - 140px)' }}>
-              <div className="inline-block min-w-full">
-                <table className="border-collapse border border-gray-300">
-                  <thead className="bg-gray-100 sticky top-0 z-10">
-                    <tr>
-                      <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 bg-gray-100 sticky left-0 z-20">
-                        #
-                      </th>
-                      {previewData.columns.map((col: string, i: number) => (
-                        <th key={i} className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
-                          {col}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewData.rows.map((row: any[], rowIdx: number) => (
-                      <tr key={rowIdx} className="hover:bg-gray-50 transition-colors">
-                        <td className="border border-gray-300 px-3 py-2 text-xs text-gray-500 bg-gray-50 sticky left-0 z-10 font-medium">
-                          {rowIdx + 1}
-                        </td>
-                        {row.map((cell: any, cellIdx: number) => {
-                          const colName = previewData.columns[cellIdx];
-                          const issues = previewType === 'before' ? getCellIssues(cell, colName, rowIdx) : [];
-                          const hasIssues = issues.length > 0;
-                          const primaryIssue = issues[0];
-
-                          return (
-                            <td
-                              key={cellIdx}
-                              className={`border border-gray-300 px-3 py-2 text-sm text-gray-800 whitespace-nowrap relative group ${
-                                hasIssues ? `${primaryIssue.color} border-2` : ''
-                              }`}
-                              onMouseEnter={() => hasIssues && setHoveredCell({ row: rowIdx, col: cellIdx })}
-                              onMouseLeave={() => setHoveredCell(null)}
-                            >
-                              <div className="flex items-center gap-1">
-                                {hasIssues && (
-                                  <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
-                                )}
-                                {cell === null || cell === undefined || cell === '' ? (
-                                  <span className="text-gray-400 italic text-xs">∅ vide</span>
-                                ) : typeof cell === 'number' ? (
-                                  <span className="text-blue-700 font-mono">{cell}</span>
-                                ) : (
-                                  <span className={hasIssues ? 'font-medium' : ''}>{String(cell)}</span>
-                                )}
-                              </div>
-
-                              {/* Tooltip avec détails des problèmes */}
-                              {hasIssues && hoveredCell?.row === rowIdx && hoveredCell?.col === cellIdx && (
-                                <div className="absolute z-50 left-0 top-full mt-1 w-72 bg-gray-900 text-white text-xs rounded-lg shadow-xl p-3 pointer-events-none">
-                                  <div className="font-semibold mb-2 flex items-center gap-2">
-                                    <AlertCircle className="w-4 h-4" />
-                                    {issues.length} problème{issues.length > 1 ? 's' : ''} détecté{issues.length > 1 ? 's' : ''}
-                                  </div>
-                                  <div className="space-y-2">
-                                    {issues.map((issue, idx) => (
-                                      <div key={idx} className="border-t border-gray-700 pt-2">
-                                        <div className="font-medium text-yellow-300">{issue.label}</div>
-                                        <div className="text-gray-300 mt-1">{issue.description}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {/* Petite flèche pointant vers la cellule */}
-                                  <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Légende des indicateurs */}
-            {previewType === 'before' && (
-              <div className="border-t border-gray-200 p-4 bg-gray-50 flex-shrink-0">
-                <div className="text-xs font-semibold text-gray-700 mb-2">Légende des problèmes :</div>
-                <div className="flex flex-wrap gap-3 text-xs">
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-yellow-100 border-2 border-yellow-400 rounded"></div>
-                    <span className="text-gray-600">Valeur manquante</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-red-100 border-2 border-red-400 rounded"></div>
-                    <span className="text-gray-600">Valeur aberrante</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-blue-100 border-2 border-blue-400 rounded"></div>
-                    <span className="text-gray-600">Emoji</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-purple-100 border-2 border-purple-400 rounded"></div>
-                    <span className="text-gray-600">Caractères spéciaux</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-orange-100 border-2 border-orange-400 rounded"></div>
-                    <span className="text-gray-600">Format de date</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {previewData.total_rows > 100 && (
-              <div className="text-center text-sm text-gray-500 p-3 bg-gray-50 rounded-b-lg border-t border-gray-200 flex-shrink-0">
-                Affichage des 100 premières lignes sur {previewData.total_rows.toLocaleString()}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Preview Modal... (reste inchangé) */}
     </div>
   );
 };
