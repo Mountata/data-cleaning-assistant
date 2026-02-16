@@ -800,7 +800,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
           <div className="max-w-3xl mx-auto space-y-6">
             {messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-2xl ${msg.sender === 'user' ? 'bg-gray-900 text-white rounded-2xl rounded-br-sm' : 'bg-white border border-gray-200 rounded-2xl rounded-bl-sm'} px-5 py-4 shadow-sm`}>
+                <div className={`max-w-2xl ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-2xl rounded-br-sm' : 'bg-white border border-gray-200 rounded-2xl rounded-bl-sm'} px-5 py-4 shadow-sm`}>
                   {msg.type === 'loading' ? (
                     <div className="flex items-center gap-2 text-gray-600">
                       <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-gray-600"></div>
