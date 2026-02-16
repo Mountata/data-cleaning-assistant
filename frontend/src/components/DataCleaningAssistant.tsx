@@ -71,6 +71,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
 
+  //  STATES POUR LE CHAT
+  const [userQuestion, setUserQuestion] = useState<string>('');
+  const [isAsking, setIsAsking] = useState<boolean>(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -595,6 +600,67 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       default: return { color: 'bg-gray-100 text-gray-700', text: 'En cours' };
     }
   };
+
+
+      {/* ==================== NOUVELLE ZONE DE CHAT ==================== */}
+    {sessionId && step === 'actions' && (
+      <div className="border-t border-gray-200 bg-white p-6">
+        <div className="max-w-3xl mx-auto space-y-4">
+          {/* Boutons rapides */}
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={getRecommendations}
+              className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+            >
+              💡 Recommande-moi des actions
+            </button>
+
+            <button
+              onClick={generateReport}
+              disabled={isGeneratingReport}
+              className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              📄 Génère un rapport
+            </button>
+
+            <button
+              onClick={() => {
+                addMessage('user', 'Quelle est la qualité de mes données ?');
+                askQuestion();
+              }}
+              className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
+            >
+              🎯 Évaluer la qualité
+            </button>
+          </div>
+
+          {/* Zone de saisie */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={userQuestion}
+              onChange={(e) => setUserQuestion(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && !isAsking && askQuestion()}
+              placeholder="Posez une question sur vos données..."
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              disabled={isAsking}
+            />
+            <button
+              onClick={askQuestion}
+              disabled={isAsking || !userQuestion.trim()}
+              className="bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAsking ? '...' : 'Envoyer'}
+            </button>
+          </div>
+
+          {/* Exemples de questions */}
+          <div className="text-xs text-gray-500">
+            <span className="font-semibold">Exemples :</span> "Combien de lignes ?", "Y a-t-il des doublons ?", "Quelle est la qualité ?"
+          </div>
+        </div>
+      </div>
+    )}
 
   const getMethodDescription = (method: string) => {
     switch (method) {
