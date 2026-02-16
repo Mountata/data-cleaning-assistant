@@ -14,6 +14,9 @@ import logging
 from config import get_config, get_message
 from auth import auth_bp
 
+from zipfile import ZipFile
+from io import BytesIO
+
 logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
@@ -784,6 +787,56 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     }), 200
 
+
+@app.route('/api/download-multiple', methods=['POST'])
+def download_multiple():
+    """Télécharge plusieurs fichiers nettoyés en un seul ZIP"""
+    try:
+        data = request.json
+        session_ids = data.get('session_ids', [])
+
+        if not session_ids or len(session_ids) == 0:
+            return jsonify({'error': 'Aucune session sélectionnée'}), 400
+
+        if len(session_ids) > 10:
+            return jsonify({'error': 'Maximum 10 fichiers à la fois'}), 400
+
+        # Créer un fichier ZIP en mémoire
+        zip_buffer = BytesIO()
+
+        with ZipFile(zip_buffer, 'w') as zip_file:
+            for session_id in session_ids:
+                if session_id not in sessions_db:
+                    continue
+
+                session = sessions_db[session_id]
+
+                # Vérifier que le fichier nettoyé existe
+                if 'cleaned_filepath' not in session:
+                    continue
+
+                if not os.path.exists(session['cleaned_filepath']):
+                    continue
+
+                # Ajouter le fichier au ZIP
+                zip_file.write(
+                    session['cleaned_filepath'],
+                    arcname=session['cleaned_filename']
+                )
+
+        # Préparer le buffer pour l'envoi
+        zip_buffer.seek(0)
+
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'data_cleaned_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+        )
+
+    except Exception as e:
+        logging.error(f"[DOWNLOAD MULTIPLE ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
