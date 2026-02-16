@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User, AlertCircle } from 'lucide-react';
 import API_URL from '../config/api';
 
-
 // Types TypeScript
 interface User {
   name?: string;
@@ -71,7 +70,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
-
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -167,90 +165,88 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }, 'download');
   };
 
-
-
-    // Fonction pour basculer la sélection d'une session
-    const toggleSessionSelection = (sessionId: string) => {
-      setSelectedSessions(prev => {
-        if (prev.includes(sessionId)) {
-          return prev.filter(id => id !== sessionId);
-        } else {
-          if (prev.length >= 10) {
-            addMessage('bot', '⚠️ Maximum 10 fichiers sélectionnables');
-            return prev;
-          }
-          return [...prev, sessionId];
+  // Fonction pour basculer la sélection d'une session
+  const toggleSessionSelection = (sessionId: string) => {
+    setSelectedSessions(prev => {
+      if (prev.includes(sessionId)) {
+        return prev.filter(id => id !== sessionId);
+      } else {
+        if (prev.length >= 10) {
+          addMessage('bot', '⚠️ Maximum 10 fichiers sélectionnables');
+          return prev;
         }
-      });
-    };
+        return [...prev, sessionId];
+      }
+    });
+  };
 
-    // Fonction pour télécharger les sessions sélectionnées
-    const downloadMultipleSessions = async () => {
-      if (selectedSessions.length === 0) {
-        addMessage('bot', '⚠️ Veuillez sélectionner au moins un fichier');
+  // Fonction pour télécharger les sessions sélectionnées
+  const downloadMultipleSessions = async () => {
+    if (selectedSessions.length === 0) {
+      addMessage('bot', '⚠️ Veuillez sélectionner au moins un fichier');
+      return;
+    }
+
+    // Vérifier que toutes les sessions sont nettoyées
+    const allCleaned = selectedSessions.every(id => {
+      const session = sessions.find(s => s.session_id === id);
+      return session?.status === 'cleaned';
+    });
+
+    if (!allCleaned) {
+      addMessage('bot', '⚠️ Tous les fichiers sélectionnés doivent être nettoyés');
+      return;
+    }
+
+    setIsDownloading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/download-multiple`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_ids: selectedSessions })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        addMessage('bot', `❌ Erreur : ${error.error || 'Téléchargement impossible'}`);
         return;
       }
 
-      // Vérifier que toutes les sessions sont nettoyées
-      const allCleaned = selectedSessions.every(id => {
-        const session = sessions.find(s => s.session_id === id);
-        return session?.status === 'cleaned';
-      });
+      // Télécharger le fichier ZIP
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `data_cleaned_${new Date().getTime()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
 
-      if (!allCleaned) {
-        addMessage('bot', '⚠️ Tous les fichiers sélectionnés doivent être nettoyés');
-        return;
-      }
-
-      setIsDownloading(true);
-
-      try {
-        const response = await fetch(`${API_URL}/api/download-multiple`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_ids: selectedSessions })
-        });
-
-        if (!response.ok) {
-          const error = await response.json();
-          addMessage('bot', `❌ Erreur : ${error.error || 'Téléchargement impossible'}`);
-          return;
-        }
-
-        // Télécharger le fichier ZIP
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `data_cleaned_${new Date().getTime()}.zip`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-
-        addMessage('bot', `✅ ${selectedSessions.length} fichier(s) téléchargé(s) avec succès !`);
-        setSelectedSessions([]);
-      } catch (err) {
-        console.error('Download error:', err);
-        addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
-      } finally {
-        setIsDownloading(false);
-      }
-    };
-
-    // Fonction pour sélectionner toutes les sessions nettoyées
-    const selectAllCleaned = () => {
-      const cleanedSessions = sessions
-        .filter(s => s.status === 'cleaned')
-        .slice(0, 10)
-        .map(s => s.session_id);
-      setSelectedSessions(cleanedSessions);
-    };
-
-    // Fonction pour désélectionner tout
-    const clearSelection = () => {
+      addMessage('bot', `✅ ${selectedSessions.length} fichier(s) téléchargé(s) avec succès !`);
       setSelectedSessions([]);
-    };
+    } catch (err) {
+      console.error('Download error:', err);
+      addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  // Fonction pour sélectionner toutes les sessions nettoyées
+  const selectAllCleaned = () => {
+    const cleanedSessions = sessions
+      .filter(s => s.status === 'cleaned')
+      .slice(0, 10)
+      .map(s => s.session_id);
+    setSelectedSessions(cleanedSessions);
+  };
+
+  // Fonction pour désélectionner tout
+  const clearSelection = () => {
+    setSelectedSessions([]);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -286,11 +282,8 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const proposeActions = (analysis: any) => {
     if (!analysis) return;
 
-    // CORRECTION 1: Typage explicite pour missing_values
     const missingCount = Object.values<any>(analysis.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0);
     const duplicates = analysis.duplicates || {};
-
-    // CORRECTION 2: Typage explicite pour outliers
     const outliers = Object.values<any>(analysis.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0), 0);
 
     let textCorrections = 0, inconsistentCase = 0;
@@ -436,13 +429,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sessionId}`, filename: downloadFilename }, 'download');
   };
 
-  // Fonction pour détecter les problèmes dans une cellule
   const getCellIssues = (value: any, colName: string, rowIdx: number): CellIssue[] => {
     if (!analysisData) return [];
 
     const issues: CellIssue[] = [];
 
-    // Vérifier les valeurs manquantes
     if (value === null || value === undefined || value === '') {
       issues.push({
         type: 'missing',
@@ -453,11 +444,9 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       });
     }
 
-    // Vérifier les outliers
     if (analysisData.outliers && analysisData.outliers[colName]) {
       const outlierCount = analysisData.outliers[colName];
       if (typeof value === 'number' && outlierCount > 0) {
-        // Simulation basique - dans la vraie app, le backend devrait fournir les indices exacts
         const isOutlier = Math.random() < (outlierCount / analysisData.rows);
         if (isOutlier) {
           issues.push({
@@ -471,11 +460,9 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       }
     }
 
-    // Vérifier les problèmes de texte
     if (analysisData.text_issues && analysisData.text_issues[colName] && typeof value === 'string') {
       const textIssue = analysisData.text_issues[colName];
 
-      // Emojis
       if (textIssue.emojis > 0 && /[\u{1F300}-\u{1F9FF}]/u.test(value)) {
         issues.push({
           type: 'emoji',
@@ -486,7 +473,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         });
       }
 
-      // Caractères spéciaux
       if (textIssue.specialChars > 0 && /[^\w\s\-.,;:!?']/.test(value)) {
         issues.push({
           type: 'special_chars',
@@ -497,7 +483,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         });
       }
 
-      // Espaces multiples
       if (textIssue.spaces > 0 && /\s{2,}/.test(value)) {
         issues.push({
           type: 'spaces',
@@ -508,7 +493,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         });
       }
 
-      // Casse incohérente
       if (textIssue.inconsistentCase > 0 && value.length > 0) {
         const hasLower = /[a-z]/.test(value);
         const hasUpper = /[A-Z]/.test(value);
@@ -524,7 +508,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       }
     }
 
-    // Vérifier les formats de dates
     if (analysisData.date_formats && analysisData.date_formats[colName]) {
       const formats = analysisData.date_formats[colName];
       if (formats && formats.length > 1 && typeof value === 'string') {
@@ -627,132 +610,128 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-
-    <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
-
-  <div className="p-4 border-b border-gray-200 space-y-3">
-    <button
-      onClick={startNewSession}
-      className="w-full bg-gray-900 text-white rounded-lg px-4 py-3 hover:bg-gray-800 transition-colors font-medium"
-    >
-      + Nouveau nettoyage
-    </button>
-
-    {/* Boutons de téléchargement multiple */}
-    {selectedSessions.length > 0 && (
-      <div className="space-y-2">
-        <button
-          onClick={downloadMultipleSessions}
-          disabled={isDownloading}
-          className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isDownloading ? (
-            <>
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              Téléchargement...
-            </>
-          ) : (
-            <>
-              <Download className="w-4 h-4" />
-              Télécharger {selectedSessions.length} fichier(s)
-            </>
-          )}
-        </button>
-
-        <div className="flex gap-2">
+      <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
+        <div className="p-4 border-b border-gray-200 space-y-3">
           <button
-            onClick={selectAllCleaned}
-            className="flex-1 bg-blue-100 text-blue-700 rounded-lg px-3 py-2 hover:bg-blue-200 transition-colors text-sm font-medium"
+            onClick={startNewSession}
+            className="w-full bg-gray-900 text-white rounded-lg px-4 py-3 hover:bg-gray-800 transition-colors font-medium"
           >
-            Tout sélectionner
+            + Nouveau nettoyage
           </button>
-          <button
-            onClick={clearSelection}
-            className="flex-1 bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 transition-colors text-sm font-medium"
-          >
-            Annuler
-          </button>
-        </div>
-      </div>
-    )}
-  </div>
 
-  {/* Liste des sessions */}
-  <div className="flex-1 overflow-y-auto p-3">
-    <div className="flex items-center justify-between px-3 py-2">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        Sessions récentes
-      </div>
-      <button onClick={loadSessions} className="text-gray-400 hover:text-gray-600 transition-colors">
-        <RefreshCw className="w-4 h-4" />
-      </button>
-    </div>
+          {/* Boutons de téléchargement multiple */}
+          {selectedSessions.length > 0 && (
+            <div className="space-y-2">
+              <button
+                onClick={downloadMultipleSessions}
+                disabled={isDownloading}
+                className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDownloading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Téléchargement...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Télécharger {selectedSessions.length} fichier(s)
+                  </>
+                )}
+              </button>
 
-    {sessions.length === 0 && (
-      <div className="text-sm text-gray-400 text-center py-8">Aucune session</div>
-    )}
-
-    {sessions.map(s => {
-      const badge = getStatusBadge(s.status);
-      const isSelected = selectedSessions.includes(s.session_id);
-      const isCleaned = s.status === 'cleaned';
-
-      return (
-        <div
-          key={s.session_id}
-          className={`p-3 rounded-lg mb-2 border transition-all ${
-            sessionId === s.session_id ? 'border-gray-900 bg-gray-50' : 'border-gray-100'
-          } ${isSelected ? 'ring-2 ring-green-500' : ''}`}
-        >
-          <div className="flex items-start gap-2">
-            {/* Checkbox de sélection (seulement pour fichiers nettoyés) */}
-            {isCleaned && (
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={(e) => {
-                  e.stopPropagation();
-                  toggleSessionSelection(s.session_id);
-                }}
-                className="mt-1 w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
-              />
-            )}
-
-            {/* Contenu de la session */}
-            <div
-              onClick={() => restoreSession(s)}
-              className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="text-sm font-medium text-gray-900 truncate flex-1">
-                  {s.filename}
-                </div>
-                <span className={`text-xs px-2 py-0.5 rounded-full ${badge.color} whitespace-nowrap`}>
-                  {badge.text}
-                </span>
-              </div>
-              <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
-                <Clock className="w-3 h-3" />
-                {new Date(s.timestamp).toLocaleString('fr-FR', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </div>
-              <div className="text-xs text-gray-400 mt-1">
-                {s.rows} lignes × {s.columns} colonnes
+              <div className="flex gap-2">
+                <button
+                  onClick={selectAllCleaned}
+                  className="flex-1 bg-blue-100 text-blue-700 rounded-lg px-3 py-2 hover:bg-blue-200 transition-colors text-sm font-medium"
+                >
+                  Tout sélectionner
+                </button>
+                <button
+                  onClick={clearSelection}
+                  className="flex-1 bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 transition-colors text-sm font-medium"
+                >
+                  Annuler
+                </button>
               </div>
             </div>
-          </div>
+          )}
         </div>
-      );
-    })}
-  </div>
-</div>
 
-     </div>
+        {/* Liste des sessions */}
+        <div className="flex-1 overflow-y-auto p-3">
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              Sessions récentes
+            </div>
+            <button onClick={loadSessions} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+
+          {sessions.length === 0 && (
+            <div className="text-sm text-gray-400 text-center py-8">Aucune session</div>
+          )}
+
+          {sessions.map(s => {
+            const badge = getStatusBadge(s.status);
+            const isSelected = selectedSessions.includes(s.session_id);
+            const isCleaned = s.status === 'cleaned';
+
+            return (
+              <div
+                key={s.session_id}
+                className={`p-3 rounded-lg mb-2 border transition-all ${
+                  sessionId === s.session_id ? 'border-gray-900 bg-gray-50' : 'border-gray-100'
+                } ${isSelected ? 'ring-2 ring-green-500' : ''}`}
+              >
+                <div className="flex items-start gap-2">
+                  {/* Checkbox de sélection (seulement pour fichiers nettoyés) */}
+                  {isCleaned && (
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        toggleSessionSelection(s.session_id);
+                      }}
+                      className="mt-1 w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                    />
+                  )}
+
+                  {/* Contenu de la session */}
+                  <div
+                    onClick={() => restoreSession(s)}
+                    className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm font-medium text-gray-900 truncate flex-1">
+                        {s.filename}
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${badge.color} whitespace-nowrap`}>
+                        {badge.text}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(s.timestamp).toLocaleString('fr-FR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {s.rows} lignes × {s.columns} colonnes
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col">
