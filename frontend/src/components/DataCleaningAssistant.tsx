@@ -1024,10 +1024,28 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                   ) : msg.type === 'results' ? (
                     <div className="whitespace-pre-line text-gray-800">{msg.content}</div>
                   ) : msg.type === 'download' ? (
-                    <button onClick={() => window.open(msg.content.downloadUrl, '_blank')}
-                      className="mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition-colors">
-                      <Download className="w-4 h-4" /> Télécharger {msg.content.filename}
-                    </button>
+                      <div>
+                        <button
+                          onClick={() => {
+                            const url = msg.content.downloadUrl;
+                            const filename = msg.content.filename;
+
+                            // Créer un lien temporaire pour forcer le téléchargement
+                            const link = document.createElement('a');
+                            link.href = url;
+                            link.download = filename;
+                            link.target = '_blank';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+
+                            addMessage('bot', `✅ Téléchargement de "${filename}" démarré !`);
+                          }}
+                          className="mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition-colors"
+                        >
+                          <Download className="w-4 h-4" /> Télécharger {msg.content.filename}
+                        </button>
+                      </div>
                   ) : msg.type === 'download-report' ? (
                     <button onClick={() => alert('Téléchargement du rapport PDF (simulation)')}
                       className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors">
