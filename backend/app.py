@@ -17,6 +17,11 @@ from auth import auth_bp
 from zipfile import ZipFile
 from io import BytesIO
 
+from assistant import DataAssistant
+from docx import Document  #
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
 logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
@@ -837,6 +842,160 @@ def download_multiple():
     except Exception as e:
         logging.error(f"[DOWNLOAD MULTIPLE ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+# ==================== ROUTES ASSISTANT ====================
+
+@app.route('/api/chat/recommend', methods=['POST'])
+def get_recommendations():
+    """Génère des recommandations personnalisées"""
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+
+        if session_id not in sessions_db:
+            return jsonify({'error': 'Session non trouvée'}), 404
+
+        session = sessions_db[session_id]
+        assistant = DataAssistant(session['dataframe'], session['analysis'])
+
+        recommendations = assistant.generate_recommendations()
+
+        return jsonify({
+            'recommendations': recommendations,
+            'count': len(recommendations)
+        }), 200
+
+    except Exception as e:
+        logging.error(f"[RECOMMEND ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/chat/ask', methods=['POST'])
+def ask_question():
+    """Répond à une question de l'utilisateur"""
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+        question = data.get('question', '')
+
+        if session_id not in sessions_db:
+            return jsonify({'error': 'Session non trouvée'}), 404
+
+        if not question:
+            return jsonify({'error': 'Question vide'}), 400
+
+        session = sessions_db[session_id]
+        assistant = DataAssistant(session['dataframe'], session['analysis'])
+
+        answer = assistant.answer_question(question)
+
+        return jsonify(answer), 200
+
+    except Exception as e:
+        logging.error(f"[ASK ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/chat/generate-report', methods=['POST'])
+def generate_report():
+    """Génère un rapport Word détaillé"""
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+
+        if session_id not in sessions_db:
+            return jsonify({'error': 'Session non trouvée'}), 404
+
+        session = sessions_db[session_id]
+        assistant = DataAssistant(session['dataframe'], session['analysis'])
+        recommendations = assistant.generate_recommendations()
+
+        # Créer le document Word
+        doc = Document()
+
+        # Titre
+        title = doc.add_heading('Rapport d\'Analyse de Qualité des Données', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Informations générales
+        doc.add_heading('📊 Informations Générales', level=1)
+        doc.add_paragraph(f"Fichier : {session['filename']}")
+        doc.add_paragraph(f"Date d'analyse : {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        doc.add_paragraph(f"Nombre de lignes : {session['analysis']['rows']:,}")
+        doc.add_paragraph(f"Nombre de colonnes : {session['analysis']['columns']}")
+
+        # Score de qualité
+        dup = session['analysis'].get('duplicates', {})
+        missing = session['analysis'].get('missing_values', {})
+        total_dup = dup.get('exact_duplicates', 0) + dup.get('structural_duplicates', 0)
+        total_missing = sum(v.get('count', 0) for v in missing.values())
+
+        quality_score = assistant._calculate_quality_score(total_dup, total_missing)
+
+        doc.add_heading('🎯 Score de Qualité', level=1)
+        score_para = doc.add_paragraph(f"Score : {quality_score}/100")
+        score_para.runs[0].font.size = Pt(16)
+        score_para.runs[0].font.bold = True
+
+        if quality_score >= 80:
+            score_para.runs[0].font.color.rgb = RGBColor(34, 139, 34)
+            doc.add_paragraph("✅ Excellente qualité")
+        elif quality_score >= 60:
+            score_para.runs[0].font.color.rgb = RGBColor(255, 165, 0)
+            doc.add_paragraph("⚡ Qualité correcte")
+        else:
+            score_para.runs[0].font.color.rgb = RGBColor(220, 20, 60)
+            doc.add_paragraph("⚠️ Nettoyage recommandé")
+
+        # Recommandations
+        doc.add_heading('💡 Recommandations', level=1)
+
+        for i, rec in enumerate(recommendations, 1):
+            doc.add_heading(f"{i}. {rec['title']}", level=2)
+            doc.add_paragraph(f"Priorité : {rec['priority'].upper()}")
+            doc.add_paragraph(f"Impact : {rec['impact']}")
+            doc.add_paragraph(f"Justification :")
+            doc.add_paragraph(rec['justification'])
+            doc.add_paragraph(f"Recommandé : {'✅ Oui' if rec['recommended'] else '⚠️ Optionnel'}")
+            doc.add_paragraph("")  # Espace
+
+        # Sauvegarder
+        report_filename = f"rapport_{session_id}.docx"
+        report_path = os.path.join(app.config['CLEANED_FOLDER'], report_filename)
+        doc.save(report_path)
+
+        return jsonify({
+            'message': 'Rapport généré avec succès',
+            'download_url': f"/api/download-report/{session_id}",
+            'filename': report_filename
+        }), 200
+
+    except Exception as e:
+        logging.error(f"[GENERATE REPORT ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/download-report/<session_id>', methods=['GET'])
+def download_report(session_id):
+    """Télécharge le rapport Word"""
+    try:
+        report_filename = f"rapport_{session_id}.docx"
+        report_path = os.path.join(app.config['CLEANED_FOLDER'], report_filename)
+
+        if not os.path.exists(report_path):
+            return jsonify({'error': 'Rapport non trouvé'}), 404
+
+        return send_file(
+            report_path,
+            as_attachment=True,
+            download_name=f"rapport_analyse_{datetime.now().strftime('%Y%m%d')}.docx"
+        )
+
+    except Exception as e:
+        logging.error(f"[DOWNLOAD REPORT ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
