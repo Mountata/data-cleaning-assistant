@@ -85,6 +85,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       addMessage('bot', `👋 Bonjour ${user?.name || 'Utilisateur'} ! Je suis votre assistant intelligent de qualité de données.\n\nTéléchargez un fichier CSV ou Excel pour commencer l'analyse 📊`);
     }
     loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addMessage = (sender: 'user' | 'bot', content: any, type: string = 'text') => {
@@ -170,29 +171,26 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }, 'download');
   };
 
-  // Fonction pour basculer la sélection d'une session
-  const toggleSessionSelection = (sessionId: string) => {
+  const toggleSessionSelection = (sessionIdToToggle: string) => {
     setSelectedSessions(prev => {
-      if (prev.includes(sessionId)) {
-        return prev.filter(id => id !== sessionId);
+      if (prev.includes(sessionIdToToggle)) {
+        return prev.filter(id => id !== sessionIdToToggle);
       } else {
         if (prev.length >= 10) {
           addMessage('bot', '⚠️ Maximum 10 fichiers sélectionnables');
           return prev;
         }
-        return [...prev, sessionId];
+        return [...prev, sessionIdToToggle];
       }
     });
   };
 
-  // Fonction pour télécharger les sessions sélectionnées
   const downloadMultipleSessions = async () => {
     if (selectedSessions.length === 0) {
       addMessage('bot', '⚠️ Veuillez sélectionner au moins un fichier');
       return;
     }
 
-    // Vérifier que toutes les sessions sont nettoyées
     const allCleaned = selectedSessions.every(id => {
       const session = sessions.find(s => s.session_id === id);
       return session?.status === 'cleaned';
@@ -218,7 +216,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         return;
       }
 
-      // Télécharger le fichier ZIP
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -239,7 +236,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-  // Fonction pour sélectionner toutes les sessions nettoyées
   const selectAllCleaned = () => {
     const cleanedSessions = sessions
       .filter(s => s.status === 'cleaned')
@@ -248,7 +244,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setSelectedSessions(cleanedSessions);
   };
 
-  // Fonction pour désélectionner tout
   const clearSelection = () => {
     setSelectedSessions([]);
   };
@@ -612,9 +607,8 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-  // ==================== NOUVELLES FONCTIONS POUR LE CHAT ====================
+  // ==================== FONCTIONS CHAT CORRIGÉES ====================
 
-  // Fonction pour obtenir des recommandations
   const getRecommendations = async () => {
     if (!sessionId || !analysisData) {
       addMessage('bot', '❌ Veuillez d\'abord charger un fichier.');
@@ -624,37 +618,36 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setIsAsking(true);
     addMessage('user', '💡 Recommande-moi des actions à effectuer sur mes données');
 
-    // Simulation de réponse (à remplacer par un vrai appel API)
-    setTimeout(() => {
-      const recommendations = [
-        {
-          action: "Supprimer les doublons",
-          justification: "Les doublons représentent 15% de vos données et faussent vos analyses statistiques",
-          impact: "Réduction de 1500 lignes, amélioration de la précision des calculs",
-          priority: "HAUTE"
-        },
-        {
-          action: "Corriger les valeurs manquantes",
-          justification: "23% de vos enregistrements ont des champs vides critiques",
-          impact: "1200 cellules corrigées, complétude améliorée",
-          priority: "MOYENNE"
-        }
-      ];
+    try {
+      const response = await fetch(`${API_URL}/api/chat/recommend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de la récupération des recommandations');
+      }
+
+      const data = await response.json();
 
       let message = "📋 **Voici mes recommandations basées sur l'analyse :**\n\n";
-      recommendations.forEach((rec, index) => {
-        message += `${index + 1}. **${rec.action}**\n`;
+      data.recommendations.forEach((rec: any, index: number) => {
+        message += `${index + 1}. **${rec.title}**\n`;
         message += `   📌 ${rec.justification}\n`;
         message += `   📊 Impact : ${rec.impact}\n`;
-        message += `   ⚡ Priorité : ${rec.priority}\n\n`;
+        message += `   ⚡ Priorité : ${rec.priority.toUpperCase()}\n\n`;
       });
 
       addMessage('bot', message);
+    } catch (error) {
+      console.error('Erreur recommandations:', error);
+      addMessage('bot', '❌ Erreur lors de la génération des recommandations');
+    } finally {
       setIsAsking(false);
-    }, 1500);
+    }
   };
 
-  // Fonction pour générer un rapport
   const generateReport = async () => {
     if (!sessionId) {
       addMessage('bot', '❌ Veuillez d\'abord charger un fichier.');
@@ -664,8 +657,19 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setIsGeneratingReport(true);
     addMessage('user', '📄 Génère-moi un rapport détaillé');
 
-    // Simulation de génération de rapport
-    setTimeout(() => {
+    try {
+      const response = await fetch(`${API_URL}/api/chat/generate-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de la génération du rapport');
+      }
+
+      const data = await response.json();
+
       const rapport = `
 📊 **RAPPORT DE QUALITÉ DES DONNÉES**
 ================================
@@ -678,7 +682,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
 --------------------
 • Lignes analysées : ${analysisData?.rows || 0}
 • Colonnes : ${analysisData?.columns || 0}
-• Score qualité : 72/100
 
 🔍 **PROBLÈMES IDENTIFIÉS**
 --------------------------
@@ -686,30 +689,25 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
 • Valeurs manquantes : ${Object.values(analysisData?.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0)}
 • Valeurs aberrantes : ${Object.values(analysisData?.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0), 0)}
 
-✅ **RECOMMANDATIONS**
---------------------
-1. Supprimer les doublons (Priorité HAUTE)
-   ➜ Justification : Impact direct sur la fiabilité des données
-
-2. Traiter les valeurs manquantes (Priorité MOYENNE)
-   ➜ Justification : Améliore la complétude des enregistrements
-
-💡 **Pour télécharger ce rapport au format PDF, cliquez sur le bouton ci-dessous**
+✅ **RAPPORT COMPLET GÉNÉRÉ**
+Le rapport détaillé est disponible au téléchargement.
       `;
 
       addMessage('bot', rapport, 'report');
-
-      // Ajouter un bouton de téléchargement simulé
       addMessage('bot', {
-        reportUrl: `/api/report/${sessionId}`,
-        filename: `rapport_${sessionId}.pdf`
+        sessionId: sessionId,
+        reportUrl: data.download_url,
+        filename: data.filename
       }, 'download-report');
 
+    } catch (error) {
+      console.error('Erreur génération rapport:', error);
+      addMessage('bot', '❌ Erreur lors de la génération du rapport');
+    } finally {
       setIsGeneratingReport(false);
-    }, 2000);
+    }
   };
 
-  // Fonction pour poser une question
   const askQuestion = async () => {
     if (!userQuestion.trim()) return;
     if (!sessionId) {
@@ -718,55 +716,32 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
 
     setIsAsking(true);
-    addMessage('user', userQuestion);
+    const question = userQuestion;
+    addMessage('user', question);
     setUserQuestion('');
 
-    // Simuler une réponse intelligente
-    setTimeout(() => {
-      let response = "";
+    try {
+      const response = await fetch(`${API_URL}/api/chat/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question: question
+        })
+      });
 
-      if (userQuestion.toLowerCase().includes('qualité') || userQuestion.toLowerCase().includes('score')) {
-        const missingCount = Object.values<any>(analysisData?.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0);
-        const duplicateCount = (analysisData?.duplicates?.exact_duplicates || 0) + (analysisData?.duplicates?.structural_duplicates || 0);
-        const totalCells = (analysisData?.rows || 1) * (analysisData?.columns || 1);
-        const qualityScore = Math.round(100 - ((missingCount + duplicateCount) / totalCells * 100));
-
-        response = `📊 **Analyse de qualité :**\n\n` +
-                  `• Score global : ${qualityScore}/100\n` +
-                  `• Problèmes détectés : ${missingCount + duplicateCount} cellules problématiques\n` +
-                  `• Taux de données propres : ${qualityScore}%\n\n` +
-                  `**Détail :**\n` +
-                  `- Doublons : ${duplicateCount}\n` +
-                  `- Valeurs manquantes : ${missingCount}`;
-      }
-      else if (userQuestion.toLowerCase().includes('doublon')) {
-        response = `🔍 **Analyse des doublons :**\n\n` +
-                  `• Doublons exacts : ${analysisData?.duplicates?.exact_duplicates || 0}\n` +
-                  `• Doublons structurels : ${analysisData?.duplicates?.structural_duplicates || 0}\n\n` +
-                  `💡 **Impact** : Les doublons faussent vos statistiques et prennent de l'espace inutilement.`;
-      }
-      else if (userQuestion.toLowerCase().includes('manquante')) {
-        const missingCount = Object.values<any>(analysisData?.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0);
-        response = `❓ **Valeurs manquantes :**\n\n` +
-                  `• Total : ${missingCount} cellules vides\n` +
-                  `• Distribution :\n`;
-
-        for (let col in analysisData?.missing_values || {}) {
-          response += `  - ${col} : ${analysisData.missing_values[col]?.count || 0}\n`;
-        }
-      }
-      else {
-        response = `🤔 Je peux vous aider avec :\n\n` +
-                  `• La **qualité** de vos données ("Quel est le score de qualité ?")\n` +
-                  `• Les **doublons** ("Combien de doublons ?")\n` +
-                  `• Les **valeurs manquantes** ("Y a-t-il des valeurs manquantes ?")\n` +
-                  `• Des **recommandations** ("Que dois-je faire ?")\n` +
-                  `• Un **rapport** ("Génère un rapport")`;
+      if (!response.ok) {
+        throw new Error('Erreur lors de la réponse');
       }
 
-      addMessage('bot', response);
+      const data = await response.json();
+      addMessage('bot', data.answer);
+    } catch (error) {
+      console.error('Erreur question:', error);
+      addMessage('bot', '❌ Erreur lors du traitement de votre question');
+    } finally {
       setIsAsking(false);
-    }, 1000);
+    }
   };
 
   return (
@@ -781,7 +756,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
             + Nouveau nettoyage
           </button>
 
-          {/* Boutons de téléchargement multiple */}
           {selectedSessions.length > 0 && (
             <div className="space-y-2">
               <button
@@ -820,7 +794,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
           )}
         </div>
 
-        {/* Liste des sessions */}
         <div className="flex-1 overflow-y-auto p-3">
           <div className="flex items-center justify-between px-3 py-2">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -848,7 +821,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                 } ${isSelected ? 'ring-2 ring-green-500' : ''}`}
               >
                 <div className="flex items-start gap-2">
-                  {/* Checkbox de sélection (seulement pour fichiers nettoyés) */}
                   {isCleaned && (
                     <input
                       type="checkbox"
@@ -861,7 +833,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                     />
                   )}
 
-                  {/* Contenu de la session */}
                   <div
                     onClick={() => restoreSession(s)}
                     className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
@@ -926,7 +897,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
               </div>
             )}
 
-            {/* User Menu */}
             <div className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
@@ -994,7 +964,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                         ))}
                       </div>
 
-                      {/* Sélecteur de méthode pour les outliers */}
                       {cleaningActions.some(a => a.id === 'outliers' && a.selected) && (
                         <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
                           <label className="block text-sm font-semibold text-gray-800 mb-2">
@@ -1028,48 +997,42 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                       className="mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition-colors">
                       <Download className="w-4 h-4" /> Télécharger {msg.content.filename}
                     </button>
-                  ): msg.type === 'download-report' ? (
-                      <button
-                        onClick={async () => {
-                          try {
-                            // Utiliser sessionId de l'état global si msg.content.sessionId est undefined
-                            const id = msg.content.sessionId || sessionId;
-
-                            if (!id) {
-                              addMessage('bot', '❌ Session ID manquant');
-                              return;
-                            }
-
-                            const response = await fetch(`${API_URL}/api/download-report/${id}`);
-
-                            if (!response.ok) {
-                              const error = await response.json();
-                              throw new Error(error.error || 'Erreur téléchargement');
-                            }
-
-                            // Récupérer le blob
-                            const blob = await response.blob();
-                            const url = window.URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = msg.content.filename || `rapport_${id}.docx`;
-                            document.body.appendChild(a);
-                            a.click();
-                            window.URL.revokeObjectURL(url);
-                            document.body.removeChild(a);
-
-                            addMessage('bot', `✅ Rapport téléchargé avec succès !`);
-                          } catch (error) {
-                            console.error('Erreur téléchargement:', error);
-                            addMessage('bot', `❌ Erreur : ${error.message}`);
+                  ) : msg.type === 'download-report' ? (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const id = msg.content.sessionId || sessionId;
+                          if (!id) {
+                            addMessage('bot', '❌ Session ID manquant');
+                            return;
                           }
-                        }}
-                        className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors"
-                      >
-                        <Download className="w-4 h-4" /> Télécharger le rapport
-                      </button>
-                    )
 
+                          const response = await fetch(`${API_URL}/api/download-report/${id}`);
+                          if (!response.ok) {
+                            const error = await response.json();
+                            throw new Error(error.error || 'Erreur téléchargement');
+                          }
+
+                          const blob = await response.blob();
+                          const url = window.URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = msg.content.filename || `rapport_${id}.docx`;
+                          document.body.appendChild(a);
+                          a.click();
+                          window.URL.revokeObjectURL(url);
+                          document.body.removeChild(a);
+
+                          addMessage('bot', `✅ Rapport téléchargé avec succès !`);
+                        } catch (error: any) {
+                          console.error('Erreur téléchargement:', error);
+                          addMessage('bot', `❌ Erreur : ${error.message}`);
+                        }
+                      }}
+                      className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors"
+                    >
+                      <Download className="w-4 h-4" /> Télécharger le rapport
+                    </button>
                   ) : (
                     <div className="whitespace-pre-line text-gray-800">{msg.content}</div>
                   )}
@@ -1080,11 +1043,9 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
           </div>
         </div>
 
-        {/* Zone de chat - visible seulement quand une session est active et qu'on est à l'étape actions */}
         {sessionId && step === 'actions' && (
           <div className="border-t border-gray-200 bg-white p-6">
             <div className="max-w-3xl mx-auto space-y-4">
-              {/* Boutons rapides */}
               <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={getRecommendations}
@@ -1113,7 +1074,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                 </button>
               </div>
 
-              {/* Zone de saisie */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -1133,7 +1093,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                 </button>
               </div>
 
-              {/* Exemples de questions */}
               <div className="text-xs text-gray-500">
                 <span className="font-semibold">Exemples :</span> "Combien de doublons ?", "Y a-t-il des valeurs manquantes ?", "Quelle est la qualité ?"
               </div>
@@ -1159,7 +1118,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         )}
       </div>
 
-      {/* Preview Modal with Issue Indicators */}
+      {/* Preview Modal */}
       {showPreview && previewData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-[95vw] w-full max-h-[95vh] flex flex-col">
@@ -1231,7 +1190,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                                 )}
                               </div>
 
-                              {/* Tooltip avec détails des problèmes */}
                               {hasIssues && hoveredCell?.row === rowIdx && hoveredCell?.col === cellIdx && (
                                 <div className="absolute z-50 left-0 top-full mt-1 w-72 bg-gray-900 text-white text-xs rounded-lg shadow-xl p-3 pointer-events-none">
                                   <div className="font-semibold mb-2 flex items-center gap-2">
@@ -1246,7 +1204,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                                       </div>
                                     ))}
                                   </div>
-                                  {/* Petite flèche pointant vers la cellule */}
                                   <div className="absolute -top-1 left-4 w-2 h-2 bg-gray-900 transform rotate-45"></div>
                                 </div>
                               )}
@@ -1260,7 +1217,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
               </div>
             </div>
 
-            {/* Légende des indicateurs */}
             {previewType === 'before' && (
               <div className="border-t border-gray-200 p-4 bg-gray-50 flex-shrink-0">
                 <div className="text-xs font-semibold text-gray-700 mb-2">Légende des problèmes :</div>
