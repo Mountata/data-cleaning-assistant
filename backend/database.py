@@ -70,6 +70,23 @@ class SessionDatabase:
             )
         ''')
 
+        cursor.execute('''
+         CREATE TABLE IF NOT EXISTS password_resets (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            token      TEXT    UNIQUE NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+         )   
+            ''')
+
+        cursor.execute('''
+         CREATE INDEX IF NOT EXISTS idx_password_resets_token
+            ON password_resets(token)
+        
+        ''')
+
         # Table des résultats de nettoyage
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cleaning_results (
@@ -110,6 +127,8 @@ class SessionDatabase:
             CREATE INDEX IF NOT EXISTS idx_actions_session 
             ON actions_log(session_id, timestamp)
         ''')
+
+
 
         conn.commit()
         cursor.close()
@@ -415,8 +434,65 @@ class SessionDatabase:
             WHERE id = ?
         ''', (user_id,))
 
+
+
+
+
         user = cursor.fetchone()
         cursor.close()
         conn.close()
 
         return dict(user) if user else None
+
+    def save_reset_token(self, user_id: int, token: str, expires_at) -> None:
+        """Sauvegarde un token de reset (supprime l'ancien s'il existe)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        # Un seul token actif par utilisateur
+        cursor.execute('DELETE FROM password_resets WHERE user_id = ?', (user_id,))
+        cursor.execute(
+            'INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)',
+            (user_id, token, expires_at.isoformat())
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    def get_reset_token(self, token: str):
+        """Récupère les infos d'un token de reset. Retourne None si inexistant."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT id, user_id, token, expires_at FROM password_resets WHERE token = ?',
+            (token,)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return dict(row) if row else None
+
+    def delete_reset_token(self, token: str) -> None:
+        """Supprime un token après utilisation (usage unique)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM password_resets WHERE token = ?', (token,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    def update_user_password(self, user_id: int, new_password_hash: str) -> None:
+        """Met à jour le mot de passe hashé d'un utilisateur."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE users SET password_hash = ? WHERE id = ?',
+            (new_password_hash, user_id)
+        )
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+
+
+

@@ -3,16 +3,26 @@ import './App.css';
 import DataCleaningAssistant from "./components/DataCleaningAssistant";
 import Login from "./components/Auth/Login";
 import Register from "./components/Auth/Register";
+import ResetPassword from "./components/Auth/ResetPassword"; // ✅ LIGNE AJOUTÉE
 import API_URL from "./config/api";
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [showRegister, setShowRegister] = useState(false);
-  const [loading, setLoading] = useState(true); // ✅ loader pendant vérification
+  const [loading, setLoading] = useState(true);
+  const [resetToken, setResetToken] = useState<string | null>(null); // ✅ LIGNE AJOUTÉE
 
-  // Vérifier le token au chargement AVEC appel serveur
   useEffect(() => {
+    // ✅ AJOUT : détecter /reset-password?token=xxx dans l'URL
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (window.location.pathname === '/reset-password' && token) {
+      setResetToken(token);
+      setLoading(false);
+      return; // court-circuit : pas besoin de vérifier le JWT
+    }
+
     const verifyToken = async () => {
       const token = localStorage.getItem('token');
 
@@ -22,7 +32,6 @@ function App() {
       }
 
       try {
-        // ✅ Vérifier le token côté serveur (pas juste localStorage)
         const response = await fetch(`${API_URL}/api/verify`, {
           method: 'GET',
           headers: {
@@ -33,17 +42,14 @@ function App() {
 
         if (response.ok) {
           const data = await response.json();
-          // ✅ Mettre à jour les données utilisateur fraîches depuis le serveur
           setCurrentUser(data.user);
           setIsAuthenticated(true);
           localStorage.setItem('user', JSON.stringify(data.user));
         } else {
-          // Token expiré ou invalide → déconnexion propre
           localStorage.removeItem('token');
           localStorage.removeItem('user');
         }
       } catch (err) {
-        // Serveur inaccessible → on tente avec les données locales en fallback
         const savedUser = localStorage.getItem('user');
         if (savedUser) {
           try {
@@ -74,8 +80,6 @@ function App() {
 
   const handleLogout = async () => {
     const token = localStorage.getItem('token');
-
-    // ✅ Appel logout côté serveur (optionnel mais propre)
     try {
       if (token) {
         await fetch(`${API_URL}/api/logout`, {
@@ -86,7 +90,6 @@ function App() {
     } catch (err) {
       // Ignorer les erreurs réseau lors du logout
     }
-
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setCurrentUser(null);
@@ -94,7 +97,12 @@ function App() {
     setShowRegister(false);
   };
 
-  // ✅ Loader pendant la vérification du token
+  // ✅ AJOUT : retour au login depuis la page de reset
+  const handleBackToLogin = () => {
+    setResetToken(null);
+    window.history.pushState({}, '', '/'); // nettoyer l'URL
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
@@ -104,6 +112,11 @@ function App() {
         </div>
       </div>
     );
+  }
+
+  // ✅ AJOUT : afficher la page reset si token dans l'URL
+  if (resetToken) {
+    return <ResetPassword token={resetToken} onBackToLogin={handleBackToLogin} />;
   }
 
   if (isAuthenticated) {

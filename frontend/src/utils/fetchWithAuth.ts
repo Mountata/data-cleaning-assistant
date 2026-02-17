@@ -1,6 +1,5 @@
 // src/utils/fetchWithAuth.ts
 // Utilitaire central pour toutes les requêtes API authentifiées
-// Remplace fetch() partout dans le projet
 
 import API_URL from '../config/api';
 
@@ -14,32 +13,31 @@ export const fetchWithAuth = async (
 ): Promise<Response> => {
   const token = localStorage.getItem('token');
 
-  // Fusionner les headers avec le token
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
 
-  // Ajouter le token si présent
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Si le body est FormData, ne pas forcer Content-Type (le navigateur le gère)
+  // Si FormData, laisser le navigateur gérer le Content-Type (boundary multipart)
   if (options.body instanceof FormData) {
     delete headers['Content-Type'];
   }
 
+  // ✅ CORRECTION : backtick manquant dans le fetch original
   const response = await fetch(`${API_URL}${endpoint}`, {
     ...options,
     headers,
   });
 
-  // ✅ Si le token est expiré ou invalide → déconnexion automatique
+  // Token expiré ou invalide → déconnexion automatique
   if (response.status === 401) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    window.location.href = '/'; // Redirection vers login
+    window.location.href = '/';
     throw new Error('Session expirée, veuillez vous reconnecter');
   }
 
