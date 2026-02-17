@@ -14,9 +14,8 @@ import os
 auth_bp = Blueprint('auth', __name__)
 SECRET_KEY = os.getenv('SECRET_KEY', 'votre-cle-secrete-changez-moi')
 
-# ── Variables Gmail (définies dans Render → Environment)
-GMAIL_USER     = os.getenv('GMAIL_USER')           # renelegrandmountata@gmail.com
-GMAIL_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')   # gpjescsrzkamdukd
+GMAIL_USER     = os.getenv('GMAIL_USER')
+GMAIL_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 FRONTEND_URL   = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 from database import SessionDatabase
@@ -51,9 +50,8 @@ def token_required(f):
 # ══════════════════════════════════════════════
 
 def send_reset_email(to_email: str, reset_token: str, user_name: str) -> bool:
-    """Envoie l'email de réinitialisation via Gmail SMTP SSL."""
     if not GMAIL_USER or not GMAIL_PASSWORD:
-        print("[EMAIL] GMAIL_USER ou GMAIL_APP_PASSWORD manquants dans les variables d'env")
+        print("[EMAIL] GMAIL_USER ou GMAIL_APP_PASSWORD manquants")
         return False
 
     reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
@@ -68,7 +66,7 @@ def send_reset_email(to_email: str, reset_token: str, user_name: str) -> bool:
         .wrap{{max-width:520px;margin:40px auto;background:#fff;border-radius:12px;
                overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.1)}}
         .head{{background:#111827;padding:32px;text-align:center}}
-        .head h1{{color:#fff;margin:0;font-size:22px;letter-spacing:-.5px}}
+        .head h1{{color:#fff;margin:0;font-size:22px}}
         .body{{padding:32px}}
         .body p{{color:#374151;line-height:1.7;margin:0 0 12px}}
         .btn{{display:block;width:fit-content;margin:28px auto;padding:14px 36px;
@@ -83,28 +81,21 @@ def send_reset_email(to_email: str, reset_token: str, user_name: str) -> bool:
     </head>
     <body>
       <div class="wrap">
-        <div class="head">
-          <h1>&#128274; Data Cleaner</h1>
-        </div>
+        <div class="head"><h1>&#128274; Data Cleaner</h1></div>
         <div class="body">
           <p>Bonjour <strong>{user_name}</strong>,</p>
-          <p>
-            Vous avez demande la reinitialisation de votre mot de passe.
-            Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe :
-          </p>
+          <p>Vous avez demande la reinitialisation de votre mot de passe.</p>
           <a href="{reset_link}" class="btn">Reinitialiser mon mot de passe</a>
           <div class="info">
-            &#128279; Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br>
+            Lien de secours :<br>
             <span style="color:#3b82f6;word-break:break-all;">{reset_link}</span>
           </div>
           <div class="warn">
-            &#9200; Ce lien expire dans <strong>1 heure</strong>.<br>
+            Ce lien expire dans <strong>1 heure</strong>.<br>
             Si vous n'avez pas fait cette demande, ignorez cet email.
           </div>
         </div>
-        <div class="foot">
-          &copy; 2026 Data Cleaner &nbsp;&middot;&nbsp; Tous droits reserves
-        </div>
+        <div class="foot">&copy; 2026 Data Cleaner</div>
       </div>
     </body>
     </html>
@@ -121,19 +112,19 @@ def send_reset_email(to_email: str, reset_token: str, user_name: str) -> bool:
             server.login(GMAIL_USER, GMAIL_PASSWORD)
             server.sendmail(GMAIL_USER, to_email, msg.as_string())
 
-        print(f"[EMAIL] Email envoye avec succes a {to_email}")
+        print(f"[EMAIL] Envoye a {to_email}")
         return True
 
     except smtplib.SMTPAuthenticationError:
-        print("[EMAIL] Erreur auth Gmail — verifiez GMAIL_USER et GMAIL_APP_PASSWORD")
+        print("[EMAIL] Erreur auth Gmail")
         return False
     except Exception as e:
-        print(f"[EMAIL] Erreur envoi : {e}")
+        print(f"[EMAIL] Erreur : {e}")
         return False
 
 
 # ══════════════════════════════════════════════
-# ROUTES EXISTANTES
+# ROUTES AUTH
 # ══════════════════════════════════════════════
 
 @auth_bp.route('/register', methods=['POST'])
@@ -253,16 +244,11 @@ def update_profile(current_user_id):
 
 
 # ══════════════════════════════════════════════
-# NOUVELLES ROUTES — MOT DE PASSE OUBLIÉ
+# MOT DE PASSE OUBLIÉ
 # ══════════════════════════════════════════════
 
 @auth_bp.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    """
-    L'utilisateur soumet son email.
-    On génère un token sécurisé et on envoie le lien par email.
-    On répond toujours "succès" pour ne pas révéler si l'email existe.
-    """
     try:
         data  = request.json
         email = data.get('email', '').strip().lower()
@@ -271,16 +257,14 @@ def forgot_password():
             return jsonify({'error': 'Email requis'}), 400
 
         user = db.get_user_by_email(email)
-
         if user:
-            reset_token = secrets.token_urlsafe(32)   # token 64 chars sécurisé
+            reset_token = secrets.token_urlsafe(32)
             expires_at  = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
             db.save_reset_token(user['id'], reset_token, expires_at)
             send_reset_email(email, reset_token, user['name'])
 
-        # Même réponse que l'email existe ou non (sécurité)
         return jsonify({
-            'message': 'Si cet email est associe a un compte, vous recevrez un lien de reinitialisation.'
+            'message': 'Si cet email est associe a un compte, vous recevrez un lien.'
         }), 200
 
     except Exception as e:
@@ -290,10 +274,6 @@ def forgot_password():
 
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
-    """
-    L'utilisateur soumet le token + nouveau mot de passe.
-    On vérifie le token, met à jour le mdp, supprime le token.
-    """
     try:
         data         = request.json
         token        = data.get('token', '').strip()
@@ -308,13 +288,11 @@ def reset_password():
         if not reset_data:
             return jsonify({'error': 'Lien invalide ou deja utilise'}), 400
 
-        # Vérification expiration
         expires_at = datetime.datetime.fromisoformat(reset_data['expires_at'])
         if datetime.datetime.utcnow() > expires_at:
             db.delete_reset_token(token)
             return jsonify({'error': 'Lien expire, veuillez refaire une demande'}), 400
 
-        # Mise à jour + suppression token (usage unique)
         new_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
         db.update_user_password(reset_data['user_id'], new_hash)
         db.delete_reset_token(token)
