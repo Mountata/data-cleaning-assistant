@@ -2,6 +2,19 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, CheckCircle, Eye, X, RefreshCw, Clock, LogOut, User, AlertCircle } from 'lucide-react';
 import API_URL from '../config/api';
 
+// ✅ Helper central : ajoute le token JWT à toutes les requêtes
+const authFetch = (url: string, options: RequestInit = {}): Promise<Response> => {
+  const token = localStorage.getItem('token');
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(options.headers || {}),
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
+  });
+};
+
 // Types TypeScript
 interface User {
   name?: string;
@@ -70,8 +83,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
-
-  // États pour le chat
   const [userQuestion, setUserQuestion] = useState<string>('');
   const [isAsking, setIsAsking] = useState<boolean>(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState<boolean>(false);
@@ -92,9 +103,10 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setMessages(prev => [...prev, { sender, content, type, timestamp: new Date() }]);
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const loadSessions = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/sessions`);
+      const res = await authFetch(`${API_URL}/api/sessions`);
       const data = await res.json();
       if (res.ok) {
         setSessions(data.sessions || []);
@@ -104,14 +116,14 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const restoreSession = async (sessionData: Session) => {
     try {
       setIsRestoring(true);
       setMessages([]);
-
       addMessage('bot', `🔄 Restauration de la session "${sessionData.filename}"...`);
 
-      const res = await fetch(`${API_URL}/api/session/${sessionData.session_id}`);
+      const res = await authFetch(`${API_URL}/api/session/${sessionData.session_id}`);
 
       if (!res.ok) {
         addMessage('bot', '❌ Impossible de restaurer cette session.');
@@ -120,7 +132,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       }
 
       const fullSession = await res.json();
-
       setSessionId(sessionData.session_id);
       setCurrentFile({ name: sessionData.filename });
       setAnalysisData(fullSession.analysis);
@@ -130,12 +141,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
 
       if (sessionData.status === 'cleaned' && fullSession.cleaning_results) {
         setStep('results');
-        displayRestoredResults(fullSession.cleaning_results);
+        displayRestoredResults(fullSession.cleaning_results, sessionData.session_id);
       } else {
         setStep('actions');
         proposeActions(fullSession.analysis);
       }
-
       setIsRestoring(false);
     } catch (err) {
       console.error('Erreur restauration:', err);
@@ -144,16 +154,15 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-  const displayRestoredResults = (results: any) => {
+  // ✅ MODIFIÉ: prend session_id en paramètre (évite bug avec sessionId pas encore mis à jour)
+  const displayRestoredResults = (results: any, sid: string) => {
     if (!results || !results.results) return;
-
     const res = results.results;
     let summary = `✨ Cette session a déjà été nettoyée !\n\n`;
     summary += `📊 Avant : ${res.initial_rows} lignes\n`;
     summary += `📊 Après : ${res.final_rows} lignes\n`;
     summary += `Différence : -${res.initial_rows - res.final_rows} lignes\n\n`;
     summary += `✅ Actions effectuées :\n`;
-
     if (res.duplicates_removed) {
       summary += `• ${res.duplicates_removed.exact_duplicates_removed || 0} doublons exacts supprimés\n`;
       summary += `• ${res.duplicates_removed.structural_duplicates_removed || 0} doublons structurels supprimés\n`;
@@ -161,12 +170,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     if (res.missing_corrected) summary += `• ${res.missing_corrected} valeurs manquantes corrigées\n`;
     if (res.outliers_removed) summary += `• ${res.outliers_removed} valeurs aberrantes traitées\n`;
     if (res.text_normalized) summary += `• ${res.text_normalized} textes normalisés\n`;
-
     summary += `\n💡 Vous pouvez télécharger le fichier nettoyé ou refaire l'analyse.`;
 
     addMessage('bot', summary, 'results');
     addMessage('bot', {
-      downloadUrl: `${API_URL}/api/download/${sessionId}`,
+      downloadUrl: `${API_URL}/api/download/${sid}`,
       filename: results.cleaned_filename
     }, 'download');
   };
@@ -185,37 +193,31 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     });
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const downloadMultipleSessions = async () => {
     if (selectedSessions.length === 0) {
       addMessage('bot', '⚠️ Veuillez sélectionner au moins un fichier');
       return;
     }
-
     const allCleaned = selectedSessions.every(id => {
       const session = sessions.find(s => s.session_id === id);
       return session?.status === 'cleaned';
     });
-
     if (!allCleaned) {
       addMessage('bot', '⚠️ Tous les fichiers sélectionnés doivent être nettoyés');
       return;
     }
-
     setIsDownloading(true);
-
     try {
-      const response = await fetch(`${API_URL}/api/download-multiple`, {
+      const response = await authFetch(`${API_URL}/api/download-multiple`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_ids: selectedSessions })
       });
-
       if (!response.ok) {
         const error = await response.json();
         addMessage('bot', `❌ Erreur : ${error.error || 'Téléchargement impossible'}`);
         return;
       }
-
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -225,11 +227,9 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-
       addMessage('bot', `✅ ${selectedSessions.length} fichier(s) téléchargé(s) avec succès !`);
       setSelectedSessions([]);
     } catch (err) {
-      console.error('Download error:', err);
       addMessage('bot', `❌ Erreur : ${(err as Error).message}`);
     } finally {
       setIsDownloading(false);
@@ -237,30 +237,26 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   };
 
   const selectAllCleaned = () => {
-    const cleanedSessions = sessions
-      .filter(s => s.status === 'cleaned')
-      .slice(0, 10)
-      .map(s => s.session_id);
+    const cleanedSessions = sessions.filter(s => s.status === 'cleaned').slice(0, 10).map(s => s.session_id);
     setSelectedSessions(cleanedSessions);
   };
 
-  const clearSelection = () => {
-    setSelectedSessions([]);
-  };
+  const clearSelection = () => setSelectedSessions([]);
 
+  // ✅ MODIFIÉ: authFetch avec FormData (sans Content-Type forcé)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setCurrentFile(file);
-    addMessage('user', `📄 ${file.name} (${(file.size/1024).toFixed(2)} KB)`);
+    addMessage('user', `📄 ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
     addMessage('bot', '🔍 Envoi du fichier au serveur et analyse en cours...', 'loading');
 
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch(`${API_URL}/api/upload`, { method: 'POST', body: formData });
+      const res = await authFetch(`${API_URL}/api/upload`, { method: 'POST', body: formData });
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
 
@@ -281,74 +277,27 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
 
   const proposeActions = (analysis: any) => {
     if (!analysis) return;
-
     const missingCount = Object.values<any>(analysis.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0);
     const duplicates = analysis.duplicates || {};
     const outliers = Object.values<any>(analysis.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0), 0);
-
     let textCorrections = 0, inconsistentCase = 0;
     for (let col in analysis.text_issues || {}) {
       const issue = analysis.text_issues[col];
       textCorrections += (issue.emojis || 0) + (issue.specialChars || 0) + (issue.spaces || 0);
       inconsistentCase += (issue.inconsistentCase || 0);
     }
-
     let dateFormatsCount = 0;
     for (let col in analysis.date_formats || {}) {
       dateFormatsCount += Math.max(0, (analysis.date_formats[col]?.length || 0) - 1);
     }
-
     const actions: CleaningAction[] = [
-      {
-        id: 'duplicates',
-        title: 'Supprimer les doublons',
-        description: `${duplicates.exact_duplicates || 0} exacts + ${duplicates.structural_duplicates || 0} structurels détectés`,
-        impact: `${(duplicates.exact_duplicates || 0) + (duplicates.structural_duplicates || 0)} lignes supprimées`,
-        selected: false,
-        risk: 'faible'
-      },
-      {
-        id: 'missing_values',
-        title: 'Corriger les valeurs manquantes',
-        description: `${missingCount} valeurs manquantes détectées.`,
-        impact: `${missingCount} cellules corrigées`,
-        selected: false,
-        risk: 'moyen'
-      },
-      {
-        id: 'outliers',
-        title: 'Traiter les valeurs aberrantes',
-        description: `${outliers} valeurs extrêmes détectées.`,
-        impact: `Méthode configurable (voir options)`,
-        selected: false,
-        risk: 'moyen'
-      },
-      {
-        id: 'text_cleaning',
-        title: 'Normaliser les textes',
-        description: 'Suppression des emojis, caractères spéciaux et espaces inutiles.',
-        impact: `${textCorrections} corrections`,
-        selected: false,
-        risk: 'faible'
-      },
-      {
-        id: 'date_format',
-        title: 'Harmoniser les dates',
-        description: `${dateFormatsCount} formats différents détectés.`,
-        impact: 'Toutes les dates harmonisées',
-        selected: false,
-        risk: 'faible'
-      },
-      {
-        id: 'case_normalization',
-        title: 'Uniformiser la casse',
-        description: `${inconsistentCase} cellules avec des casses différentes.`,
-        impact: `${inconsistentCase} corrections`,
-        selected: false,
-        risk: 'faible'
-      }
+      { id: 'duplicates', title: 'Supprimer les doublons', description: `${duplicates.exact_duplicates || 0} exacts + ${duplicates.structural_duplicates || 0} structurels détectés`, impact: `${(duplicates.exact_duplicates || 0) + (duplicates.structural_duplicates || 0)} lignes supprimées`, selected: false, risk: 'faible' },
+      { id: 'missing_values', title: 'Corriger les valeurs manquantes', description: `${missingCount} valeurs manquantes détectées.`, impact: `${missingCount} cellules corrigées`, selected: false, risk: 'moyen' },
+      { id: 'outliers', title: 'Traiter les valeurs aberrantes', description: `${outliers} valeurs extrêmes détectées.`, impact: `Méthode configurable (voir options)`, selected: false, risk: 'moyen' },
+      { id: 'text_cleaning', title: 'Normaliser les textes', description: 'Suppression des emojis, caractères spéciaux et espaces inutiles.', impact: `${textCorrections} corrections`, selected: false, risk: 'faible' },
+      { id: 'date_format', title: 'Harmoniser les dates', description: `${dateFormatsCount} formats différents détectés.`, impact: 'Toutes les dates harmonisées', selected: false, risk: 'faible' },
+      { id: 'case_normalization', title: 'Uniformiser la casse', description: `${inconsistentCase} cellules avec des casses différentes.`, impact: `${inconsistentCase} corrections`, selected: false, risk: 'faible' }
     ];
-
     setCleaningActions(actions);
     addMessage('bot', `🎯 Actions recommandées : ${actions.length} types de corrections possibles.`, 'actions');
   };
@@ -357,32 +306,22 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setCleaningActions(prev => prev.map(a => a.id === actionId ? { ...a, selected: !a.selected } : a));
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const executeActions = async () => {
     const selected = cleaningActions.filter(a => a.selected).map(a => a.id);
-    if (selected.length === 0) {
-      addMessage('bot', '⚠️ Aucune action sélectionnée.');
-      return;
-    }
+    if (selected.length === 0) { addMessage('bot', '⚠️ Aucune action sélectionnée.'); return; }
 
     addMessage('user', `✅ Actions sélectionnées : ${selected.join(', ')}`);
-    if (selected.includes('outliers')) {
-      addMessage('user', `🎯 Méthode outliers : ${outlierMethod}`);
-    }
+    if (selected.includes('outliers')) addMessage('user', `🎯 Méthode outliers : ${outlierMethod}`);
     addMessage('bot', '🔧 Nettoyage en cours...', 'loading');
 
     try {
-      const res = await fetch(`${API_URL}/api/clean`, {
+      const res = await authFetch(`${API_URL}/api/clean`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          actions: selected,
-          outlier_method: outlierMethod
-        })
+        body: JSON.stringify({ session_id: sessionId, actions: selected, outlier_method: outlierMethod })
       });
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
-
       if (res.ok) {
         displayResults(data.results, data.download_filename);
         loadSessions();
@@ -398,162 +337,80 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const displayResults = (results: any, downloadFilename: string) => {
     if (!results) return;
     setStep('results');
-
     let summary = `✨ Nettoyage terminé !\n\n`;
     summary += `📊 Avant : ${results.initial_rows} lignes\n`;
     summary += `📊 Après : ${results.final_rows} lignes\n`;
     summary += `Différence : -${results.initial_rows - results.final_rows} lignes\n\n`;
     summary += `✅ Actions effectuées :\n`;
-
     const dup = results.duplicates_removed;
     if (dup) {
       summary += `• ${dup.exact_duplicates_removed || 0} doublons exacts supprimés\n`;
       summary += `• ${dup.structural_duplicates_removed || 0} doublons structurels supprimés\n`;
     }
-
     if (results.missing_corrected) summary += `• ${results.missing_corrected} valeurs manquantes corrigées\n`;
-
     if (results.outliers_info) {
       const info = results.outliers_info;
       summary += `• ${info.total_outliers || 0} outliers traités (méthode: ${info.method_used})\n`;
-      if (info.rows_removed > 0) {
-        summary += `  → ${info.rows_removed} lignes supprimées\n`;
-      }
+      if (info.rows_removed > 0) summary += `  → ${info.rows_removed} lignes supprimées\n`;
     }
-
     if (results.text_normalized) summary += `• ${results.text_normalized} textes normalisés\n`;
-
     summary += `\n💾 Vos données nettoyées sont prêtes au téléchargement !`;
-
     addMessage('bot', summary, 'results');
     addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sessionId}`, filename: downloadFilename }, 'download');
   };
 
   const getCellIssues = (value: any, colName: string, rowIdx: number): CellIssue[] => {
     if (!analysisData) return [];
-
     const issues: CellIssue[] = [];
-
     if (value === null || value === undefined || value === '') {
-      issues.push({
-        type: 'missing',
-        severity: 'warning',
-        label: 'Valeur manquante',
-        description: 'Cette cellule est vide ou contient une valeur nulle',
-        color: 'bg-yellow-100 border-yellow-400'
-      });
+      issues.push({ type: 'missing', severity: 'warning', label: 'Valeur manquante', description: 'Cette cellule est vide ou contient une valeur nulle', color: 'bg-yellow-100 border-yellow-400' });
     }
-
     if (analysisData.outliers && analysisData.outliers[colName]) {
       const outlierCount = analysisData.outliers[colName];
       if (typeof value === 'number' && outlierCount > 0) {
         const isOutlier = Math.random() < (outlierCount / analysisData.rows);
-        if (isOutlier) {
-          issues.push({
-            type: 'outlier',
-            severity: 'error',
-            label: 'Valeur aberrante',
-            description: 'Cette valeur est statistiquement anormale (hors des limites IQR)',
-            color: 'bg-red-100 border-red-400'
-          });
-        }
+        if (isOutlier) issues.push({ type: 'outlier', severity: 'error', label: 'Valeur aberrante', description: 'Cette valeur est statistiquement anormale (hors des limites IQR)', color: 'bg-red-100 border-red-400' });
       }
     }
-
     if (analysisData.text_issues && analysisData.text_issues[colName] && typeof value === 'string') {
       const textIssue = analysisData.text_issues[colName];
-
-      if (textIssue.emojis > 0 && /[\u{1F300}-\u{1F9FF}]/u.test(value)) {
-        issues.push({
-          type: 'emoji',
-          severity: 'info',
-          label: 'Emoji détecté',
-          description: 'Cette cellule contient des emojis qui peuvent poser problème',
-          color: 'bg-blue-100 border-blue-400'
-        });
-      }
-
-      if (textIssue.specialChars > 0 && /[^\w\s\-.,;:!?']/.test(value)) {
-        issues.push({
-          type: 'special_chars',
-          severity: 'info',
-          label: 'Caractères spéciaux',
-          description: 'Cette cellule contient des caractères spéciaux inhabituels',
-          color: 'bg-purple-100 border-purple-400'
-        });
-      }
-
-      if (textIssue.spaces > 0 && /\s{2,}/.test(value)) {
-        issues.push({
-          type: 'spaces',
-          severity: 'info',
-          label: 'Espaces multiples',
-          description: 'Cette cellule contient des espaces en trop',
-          color: 'bg-indigo-100 border-indigo-400'
-        });
-      }
-
+      if (textIssue.emojis > 0 && /[\u{1F300}-\u{1F9FF}]/u.test(value)) issues.push({ type: 'emoji', severity: 'info', label: 'Emoji détecté', description: 'Cette cellule contient des emojis qui peuvent poser problème', color: 'bg-blue-100 border-blue-400' });
+      if (textIssue.specialChars > 0 && /[^\w\s\-.,;:!?']/.test(value)) issues.push({ type: 'special_chars', severity: 'info', label: 'Caractères spéciaux', description: 'Cette cellule contient des caractères spéciaux inhabituels', color: 'bg-purple-100 border-purple-400' });
+      if (textIssue.spaces > 0 && /\s{2,}/.test(value)) issues.push({ type: 'spaces', severity: 'info', label: 'Espaces multiples', description: 'Cette cellule contient des espaces en trop', color: 'bg-indigo-100 border-indigo-400' });
       if (textIssue.inconsistentCase > 0 && value.length > 0) {
         const hasLower = /[a-z]/.test(value);
         const hasUpper = /[A-Z]/.test(value);
         if (hasLower && hasUpper && value !== value.toLowerCase() && value !== value.toUpperCase()) {
-          issues.push({
-            type: 'case',
-            severity: 'info',
-            label: 'Casse mixte',
-            description: 'Cette cellule utilise différentes casses (majuscules/minuscules)',
-            color: 'bg-cyan-100 border-cyan-400'
-          });
+          issues.push({ type: 'case', severity: 'info', label: 'Casse mixte', description: 'Cette cellule utilise différentes casses (majuscules/minuscules)', color: 'bg-cyan-100 border-cyan-400' });
         }
       }
     }
-
     if (analysisData.date_formats && analysisData.date_formats[colName]) {
       const formats = analysisData.date_formats[colName];
       if (formats && formats.length > 1 && typeof value === 'string') {
-        issues.push({
-          type: 'date_format',
-          severity: 'warning',
-          label: 'Format de date incohérent',
-          description: `Cette colonne contient ${formats.length} formats de date différents`,
-          color: 'bg-orange-100 border-orange-400'
-        });
+        issues.push({ type: 'date_format', severity: 'warning', label: 'Format de date incohérent', description: `Cette colonne contient ${formats.length} formats de date différents`, color: 'bg-orange-100 border-orange-400' });
       }
     }
-
     return issues;
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const viewData = async (type: 'before' | 'after' = 'before') => {
-    if (!sessionId) {
-      addMessage('bot', '⚠️ Aucune session active.');
-      return;
-    }
-
-    if (type === 'after' && step !== 'results') {
-      addMessage('bot', '⚠️ Vous devez d\'abord nettoyer les données.');
-      return;
-    }
-
-    const endpoint = type === 'before'
-      ? `${API_URL}/api/preview/${sessionId}`
-      : `${API_URL}/api/preview-cleaned/${sessionId}`;
-
+    if (!sessionId) { addMessage('bot', '⚠️ Aucune session active.'); return; }
+    if (type === 'after' && step !== 'results') { addMessage('bot', '⚠️ Vous devez d\'abord nettoyer les données.'); return; }
+    const endpoint = type === 'before' ? `${API_URL}/api/preview/${sessionId}` : `${API_URL}/api/preview-cleaned/${sessionId}`;
     try {
-      const res = await fetch(endpoint);
-
+      const res = await authFetch(endpoint);
       if (!res.ok) {
         const errorData = await res.json();
         addMessage('bot', `❌ Erreur : ${errorData.error || 'Impossible de charger les données'}`);
         return;
       }
-
       const data = await res.json();
       setPreviewData(data);
       setPreviewType(type);
       setShowPreview(true);
     } catch (err) {
-      console.error('Preview error:', err);
       addMessage('bot', `❌ Erreur de connexion : ${(err as Error).message}`);
     }
   };
@@ -607,137 +464,72 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-  // ==================== FONCTIONS CHAT CORRIGÉES ====================
-
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const getRecommendations = async () => {
-    if (!sessionId || !analysisData) {
-      addMessage('bot', '❌ Veuillez d\'abord charger un fichier.');
-      return;
-    }
-
+    if (!sessionId || !analysisData) { addMessage('bot', '❌ Veuillez d\'abord charger un fichier.'); return; }
     setIsAsking(true);
     addMessage('user', '💡 Recommande-moi des actions à effectuer sur mes données');
-
     try {
-      const response = await fetch(`${API_URL}/api/chat/recommend`, {
+      const response = await authFetch(`${API_URL}/api/chat/recommend`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId })
       });
-
-      if (!response.ok) {
-        throw new Error('Erreur lors de la récupération des recommandations');
-      }
-
+      if (!response.ok) throw new Error('Erreur lors de la récupération des recommandations');
       const data = await response.json();
-
-      let message = "📋 **Voici mes recommandations basées sur l'analyse :**\n\n";
+      let message = "📋 Voici mes recommandations basées sur l'analyse :\n\n";
       data.recommendations.forEach((rec: any, index: number) => {
-        message += `${index + 1}. **${rec.title}**\n`;
+        message += `${index + 1}. ${rec.title}\n`;
         message += `   📌 ${rec.justification}\n`;
         message += `   📊 Impact : ${rec.impact}\n`;
         message += `   ⚡ Priorité : ${rec.priority.toUpperCase()}\n\n`;
       });
-
       addMessage('bot', message);
     } catch (error) {
-      console.error('Erreur recommandations:', error);
       addMessage('bot', '❌ Erreur lors de la génération des recommandations');
     } finally {
       setIsAsking(false);
     }
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const generateReport = async () => {
-    if (!sessionId) {
-      addMessage('bot', '❌ Veuillez d\'abord charger un fichier.');
-      return;
-    }
-
+    if (!sessionId) { addMessage('bot', '❌ Veuillez d\'abord charger un fichier.'); return; }
     setIsGeneratingReport(true);
     addMessage('user', '📄 Génère-moi un rapport détaillé');
-
     try {
-      const response = await fetch(`${API_URL}/api/chat/generate-report`, {
+      const response = await authFetch(`${API_URL}/api/chat/generate-report`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId })
       });
-
-      if (!response.ok) {
-        throw new Error('Erreur lors de la génération du rapport');
-      }
-
+      if (!response.ok) throw new Error('Erreur lors de la génération du rapport');
       const data = await response.json();
-
-      const rapport = `
-📊 **RAPPORT DE QUALITÉ DES DONNÉES**
-================================
-
-📁 **Fichier** : ${currentFile?.name || 'Non spécifié'}
-📅 **Date** : ${new Date().toLocaleDateString()}
-📊 **Session ID** : ${sessionId}
-
-📈 **RÉSUMÉ GLOBAL**
---------------------
-• Lignes analysées : ${analysisData?.rows || 0}
-• Colonnes : ${analysisData?.columns || 0}
-
-🔍 **PROBLÈMES IDENTIFIÉS**
---------------------------
-• Doublons : ${analysisData?.duplicates?.exact_duplicates || 0} exacts, ${analysisData?.duplicates?.structural_duplicates || 0} structurels
-• Valeurs manquantes : ${Object.values(analysisData?.missing_values || {}).reduce((a: number, b: any) => a + (b?.count || 0), 0)}
-• Valeurs aberrantes : ${Object.values(analysisData?.outliers || {}).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0), 0)}
-
-✅ **RAPPORT COMPLET GÉNÉRÉ**
-Le rapport détaillé est disponible au téléchargement.
-      `;
-
+      const rapport = `📊 RAPPORT DE QUALITÉ DES DONNÉES\n\n📁 Fichier : ${currentFile?.name || 'Non spécifié'}\n📅 Date : ${new Date().toLocaleDateString()}\n\n📈 Lignes : ${analysisData?.rows || 0} | Colonnes : ${analysisData?.columns || 0}\n\n✅ Rapport complet disponible au téléchargement.`;
       addMessage('bot', rapport, 'report');
-      addMessage('bot', {
-        sessionId: sessionId,
-        reportUrl: data.download_url,
-        filename: data.filename
-      }, 'download-report');
-
+      addMessage('bot', { sessionId: sessionId, reportUrl: data.download_url, filename: data.filename }, 'download-report');
     } catch (error) {
-      console.error('Erreur génération rapport:', error);
       addMessage('bot', '❌ Erreur lors de la génération du rapport');
     } finally {
       setIsGeneratingReport(false);
     }
   };
 
+  // ✅ MODIFIÉ: authFetch au lieu de fetch
   const askQuestion = async () => {
     if (!userQuestion.trim()) return;
-    if (!sessionId) {
-      addMessage('bot', '❌ Veuillez d\'abord charger un fichier.');
-      return;
-    }
-
+    if (!sessionId) { addMessage('bot', '❌ Veuillez d\'abord charger un fichier.'); return; }
     setIsAsking(true);
     const question = userQuestion;
     addMessage('user', question);
     setUserQuestion('');
-
     try {
-      const response = await fetch(`${API_URL}/api/chat/ask`, {
+      const response = await authFetch(`${API_URL}/api/chat/ask`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          question: question
-        })
+        body: JSON.stringify({ session_id: sessionId, question })
       });
-
-      if (!response.ok) {
-        throw new Error('Erreur lors de la réponse');
-      }
-
+      if (!response.ok) throw new Error('Erreur lors de la réponse');
       const data = await response.json();
       addMessage('bot', data.answer);
     } catch (error) {
-      console.error('Erreur question:', error);
       addMessage('bot', '❌ Erreur lors du traitement de votre question');
     } finally {
       setIsAsking(false);
@@ -749,46 +541,18 @@ Le rapport détaillé est disponible au téléchargement.
       {/* Sidebar */}
       <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-4 border-b border-gray-200 space-y-3">
-          <button
-            onClick={startNewSession}
-            className="w-full bg-gray-900 text-white rounded-lg px-4 py-3 hover:bg-gray-800 transition-colors font-medium"
-          >
+          <button onClick={startNewSession} className="w-full bg-gray-900 text-white rounded-lg px-4 py-3 hover:bg-gray-800 transition-colors font-medium">
             + Nouveau nettoyage
           </button>
-
           {selectedSessions.length > 0 && (
             <div className="space-y-2">
-              <button
-                onClick={downloadMultipleSessions}
-                disabled={isDownloading}
-                className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isDownloading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                    Téléchargement...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    Télécharger {selectedSessions.length} fichier(s)
-                  </>
-                )}
+              <button onClick={downloadMultipleSessions} disabled={isDownloading}
+                className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                {isDownloading ? (<><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>Téléchargement...</>) : (<><Download className="w-4 h-4" />Télécharger {selectedSessions.length} fichier(s)</>)}
               </button>
-
               <div className="flex gap-2">
-                <button
-                  onClick={selectAllCleaned}
-                  className="flex-1 bg-blue-100 text-blue-700 rounded-lg px-3 py-2 hover:bg-blue-200 transition-colors text-sm font-medium"
-                >
-                  Tout sélectionner
-                </button>
-                <button
-                  onClick={clearSelection}
-                  className="flex-1 bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 transition-colors text-sm font-medium"
-                >
-                  Annuler
-                </button>
+                <button onClick={selectAllCleaned} className="flex-1 bg-blue-100 text-blue-700 rounded-lg px-3 py-2 hover:bg-blue-200 transition-colors text-sm font-medium">Tout sélectionner</button>
+                <button onClick={clearSelection} className="flex-1 bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 transition-colors text-sm font-medium">Annuler</button>
               </div>
             </div>
           )}
@@ -796,68 +560,31 @@ Le rapport détaillé est disponible au téléchargement.
 
         <div className="flex-1 overflow-y-auto p-3">
           <div className="flex items-center justify-between px-3 py-2">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-              Sessions récentes
-            </div>
-            <button onClick={loadSessions} className="text-gray-400 hover:text-gray-600 transition-colors">
-              <RefreshCw className="w-4 h-4" />
-            </button>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Sessions récentes</div>
+            <button onClick={loadSessions} className="text-gray-400 hover:text-gray-600 transition-colors"><RefreshCw className="w-4 h-4" /></button>
           </div>
-
-          {sessions.length === 0 && (
-            <div className="text-sm text-gray-400 text-center py-8">Aucune session</div>
-          )}
-
+          {sessions.length === 0 && <div className="text-sm text-gray-400 text-center py-8">Aucune session</div>}
           {sessions.map(s => {
             const badge = getStatusBadge(s.status);
             const isSelected = selectedSessions.includes(s.session_id);
             const isCleaned = s.status === 'cleaned';
-
             return (
-              <div
-                key={s.session_id}
-                className={`p-3 rounded-lg mb-2 border transition-all ${
-                  sessionId === s.session_id ? 'border-gray-900 bg-gray-50' : 'border-gray-100'
-                } ${isSelected ? 'ring-2 ring-green-500' : ''}`}
-              >
+              <div key={s.session_id} className={`p-3 rounded-lg mb-2 border transition-all ${sessionId === s.session_id ? 'border-gray-900 bg-gray-50' : 'border-gray-100'} ${isSelected ? 'ring-2 ring-green-500' : ''}`}>
                 <div className="flex items-start gap-2">
                   {isCleaned && (
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleSessionSelection(s.session_id);
-                      }}
-                      className="mt-1 w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
-                    />
+                    <input type="checkbox" checked={isSelected} onChange={(e) => { e.stopPropagation(); toggleSessionSelection(s.session_id); }}
+                      className="mt-1 w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer" />
                   )}
-
-                  <div
-                    onClick={() => restoreSession(s)}
-                    className="flex-1 cursor-pointer hover:opacity-80 transition-opacity"
-                  >
+                  <div onClick={() => restoreSession(s)} className="flex-1 cursor-pointer hover:opacity-80 transition-opacity">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="text-sm font-medium text-gray-900 truncate flex-1">
-                        {s.filename}
-                      </div>
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${badge.color} whitespace-nowrap`}>
-                        {badge.text}
-                      </span>
+                      <div className="text-sm font-medium text-gray-900 truncate flex-1">{s.filename}</div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${badge.color} whitespace-nowrap`}>{badge.text}</span>
                     </div>
                     <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
                       <Clock className="w-3 h-3" />
-                      {new Date(s.timestamp).toLocaleString('fr-FR', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
+                      {new Date(s.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </div>
-                    <div className="text-xs text-gray-400 mt-1">
-                      {s.rows} lignes × {s.columns} colonnes
-                    </div>
+                    <div className="text-xs text-gray-400 mt-1">{s.rows} lignes × {s.columns} colonnes</div>
                   </div>
                 </div>
               </div>
@@ -871,56 +598,40 @@ Le rapport détaillé est disponible au téléchargement.
         <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Assistant de Nettoyage de Données</h1>
-            {currentFile && (
-              <p className="text-sm text-gray-500 mt-1">Fichier actuel : {currentFile.name || currentFile.filename}</p>
-            )}
+            {currentFile && <p className="text-sm text-gray-500 mt-1">Fichier actuel : {currentFile.name || currentFile.filename}</p>}
           </div>
           <div className="flex items-center gap-3">
             {sessionId && (
               <div className="flex gap-2">
                 <button onClick={() => viewData('before')} className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
-                  <Eye className="w-4 h-4" />
-                  Données originales
+                  <Eye className="w-4 h-4" />Données originales
                 </button>
                 {step === 'results' && (
                   <>
                     <button onClick={() => viewData('after')} className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
-                      <Eye className="w-4 h-4" />
-                      Données nettoyées
+                      <Eye className="w-4 h-4" />Données nettoyées
                     </button>
                     <button onClick={reanalyze} className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors">
-                      <RefreshCw className="w-4 h-4" />
-                      Modifier actions
+                      <RefreshCw className="w-4 h-4" />Modifier actions
                     </button>
                   </>
                 )}
               </div>
             )}
-
             <div className="relative">
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
+              <button onClick={() => setShowUserMenu(!showUserMenu)} className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
                 <User className="w-4 h-4 text-gray-600" />
                 <span className="text-sm font-medium text-gray-700">{user?.name || 'Utilisateur'}</span>
               </button>
-
               {showUserMenu && (
                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
                   <div className="px-4 py-2 border-b border-gray-100">
                     <p className="text-sm font-medium text-gray-900">{user?.name}</p>
                     <p className="text-xs text-gray-500">{user?.email}</p>
                   </div>
-                  <button
-                    onClick={() => {
-                      setShowUserMenu(false);
-                      onLogout();
-                    }}
-                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    Déconnexion
+                  <button onClick={() => { setShowUserMenu(false); onLogout(); }}
+                    className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+                    <LogOut className="w-4 h-4" />Déconnexion
                   </button>
                 </div>
               )}
@@ -935,8 +646,7 @@ Le rapport détaillé est disponible au téléchargement.
                 <div className={`max-w-2xl ${msg.sender === 'user' ? 'bg-blue-600 text-white rounded-2xl rounded-br-sm' : 'bg-white border border-gray-200 rounded-2xl rounded-bl-sm'} px-5 py-4 shadow-sm`}>
                   {msg.type === 'loading' ? (
                     <div className="flex items-center gap-2 text-gray-600">
-                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-gray-600"></div>
-                      {msg.content}
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-gray-600"></div>{msg.content}
                     </div>
                   ) : msg.type === 'actions' ? (
                     <div>
@@ -952,9 +662,7 @@ Le rapport détaillé est disponible au téléchargement.
                               <div className="flex-1">
                                 <div className="flex items-center gap-2">
                                   <h4 className="font-semibold text-gray-900">{action.title}</h4>
-                                  <span className={`text-xs px-2 py-1 rounded-full ${getRiskBadge(action.risk)}`}>
-                                    Risque {action.risk}
-                                  </span>
+                                  <span className={`text-xs px-2 py-1 rounded-full ${getRiskBadge(action.risk)}`}>Risque {action.risk}</span>
                                 </div>
                                 <p className="text-sm text-gray-600 mt-1">{action.description}</p>
                                 <p className="text-xs text-gray-500 mt-2"><strong>Impact :</strong> {action.impact}</p>
@@ -963,29 +671,20 @@ Le rapport détaillé est disponible au téléchargement.
                           </div>
                         ))}
                       </div>
-
                       {cleaningActions.some(a => a.id === 'outliers' && a.selected) && (
                         <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
-                          <label className="block text-sm font-semibold text-gray-800 mb-2">
-                            🎯 Méthode de traitement des valeurs aberrantes :
-                          </label>
-                          <select
-                            value={outlierMethod}
-                            onChange={(e) => setOutlierMethod(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-                          >
+                          <label className="block text-sm font-semibold text-gray-800 mb-2">🎯 Méthode de traitement des valeurs aberrantes :</label>
+                          <select value={outlierMethod} onChange={(e) => setOutlierMethod(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white">
                             <option value="median">📊 Remplacer par la médiane (RECOMMANDÉ)</option>
                             <option value="cap">🔒 Plafonner aux limites</option>
                             <option value="flag">🏴 Ajouter un indicateur</option>
                             <option value="nan">❓ Marquer comme manquant</option>
                             <option value="remove">🗑️ Supprimer les lignes</option>
                           </select>
-                          <p className="text-xs text-gray-700 mt-2 leading-relaxed">
-                            {getMethodDescription(outlierMethod)}
-                          </p>
+                          <p className="text-xs text-gray-700 mt-2 leading-relaxed">{getMethodDescription(outlierMethod)}</p>
                         </div>
                       )}
-
                       <button onClick={executeActions} className="w-full mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors font-medium">
                         ✨ Appliquer les actions sélectionnées
                       </button>
@@ -993,44 +692,51 @@ Le rapport détaillé est disponible au téléchargement.
                   ) : msg.type === 'results' ? (
                     <div className="whitespace-pre-line text-gray-800">{msg.content}</div>
                   ) : msg.type === 'download' ? (
-                    <button onClick={() => window.open(msg.content.downloadUrl, '_blank')}
-                      className="mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition-colors">
+                    // ✅ MODIFIÉ: utilise authFetch pour le téléchargement (gère le token)
+                    <button onClick={async () => {
+                      try {
+                        const response = await authFetch(msg.content.downloadUrl);
+                        if (!response.ok) throw new Error('Erreur téléchargement');
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = msg.content.filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                      } catch (err: any) {
+                        addMessage('bot', `❌ Erreur : ${err.message}`);
+                      }
+                    }} className="mt-4 bg-gray-900 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition-colors">
                       <Download className="w-4 h-4" /> Télécharger {msg.content.filename}
                     </button>
                   ) : msg.type === 'download-report' ? (
-                    <button
-                      onClick={async () => {
-                        try {
-                          const id = msg.content.sessionId || sessionId;
-                          if (!id) {
-                            addMessage('bot', '❌ Session ID manquant');
-                            return;
-                          }
-
-                          const response = await fetch(`${API_URL}/api/download-report/${id}`);
-                          if (!response.ok) {
-                            const error = await response.json();
-                            throw new Error(error.error || 'Erreur téléchargement');
-                          }
-
-                          const blob = await response.blob();
-                          const url = window.URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = msg.content.filename || `rapport_${id}.docx`;
-                          document.body.appendChild(a);
-                          a.click();
-                          window.URL.revokeObjectURL(url);
-                          document.body.removeChild(a);
-
-                          addMessage('bot', `✅ Rapport téléchargé avec succès !`);
-                        } catch (error: any) {
-                          console.error('Erreur téléchargement:', error);
-                          addMessage('bot', `❌ Erreur : ${error.message}`);
+                    // ✅ MODIFIÉ: utilise authFetch pour le rapport
+                    <button onClick={async () => {
+                      try {
+                        const id = msg.content.sessionId || sessionId;
+                        if (!id) { addMessage('bot', '❌ Session ID manquant'); return; }
+                        const response = await authFetch(`${API_URL}/api/download-report/${id}`);
+                        if (!response.ok) {
+                          const error = await response.json();
+                          throw new Error(error.error || 'Erreur téléchargement');
                         }
-                      }}
-                      className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors"
-                    >
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = msg.content.filename || `rapport_${id}.docx`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                        addMessage('bot', `✅ Rapport téléchargé avec succès !`);
+                      } catch (error: any) {
+                        addMessage('bot', `❌ Erreur : ${error.message}`);
+                      }
+                    }} className="mt-4 bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition-colors">
                       <Download className="w-4 h-4" /> Télécharger le rapport
                     </button>
                   ) : (
@@ -1047,52 +753,20 @@ Le rapport détaillé est disponible au téléchargement.
           <div className="border-t border-gray-200 bg-white p-6">
             <div className="max-w-3xl mx-auto space-y-4">
               <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={getRecommendations}
-                  disabled={isAsking}
-                  className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  💡 Recommande-moi des actions
-                </button>
-
-                <button
-                  onClick={generateReport}
-                  disabled={isGeneratingReport}
-                  className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {isGeneratingReport ? 'Génération...' : '📄 Génère un rapport'}
-                </button>
-
-                <button
-                  onClick={() => {
-                    setUserQuestion('Quelle est la qualité de mes données ?');
-                    setTimeout(() => askQuestion(), 100);
-                  }}
-                  className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
-                >
-                  🎯 Évaluer la qualité
-                </button>
+                <button onClick={getRecommendations} disabled={isAsking} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-2 disabled:opacity-50">💡 Recommande-moi des actions</button>
+                <button onClick={generateReport} disabled={isGeneratingReport} className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-2 disabled:opacity-50">{isGeneratingReport ? 'Génération...' : '📄 Génère un rapport'}</button>
+                <button onClick={() => { setUserQuestion('Quelle est la qualité de mes données ?'); setTimeout(() => askQuestion(), 100); }} className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors">🎯 Évaluer la qualité</button>
               </div>
-
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={userQuestion}
-                  onChange={(e) => setUserQuestion(e.target.value)}
+                <input type="text" value={userQuestion} onChange={(e) => setUserQuestion(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && !isAsking && askQuestion()}
                   placeholder="Posez une question sur vos données..."
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  disabled={isAsking}
-                />
-                <button
-                  onClick={askQuestion}
-                  disabled={isAsking || !userQuestion.trim()}
-                  className="bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" disabled={isAsking} />
+                <button onClick={askQuestion} disabled={isAsking || !userQuestion.trim()}
+                  className="bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                   {isAsking ? '...' : 'Envoyer'}
                 </button>
               </div>
-
               <div className="text-xs text-gray-500">
                 <span className="font-semibold">Exemples :</span> "Combien de doublons ?", "Y a-t-il des valeurs manquantes ?", "Quelle est la qualité ?"
               </div>
@@ -1126,61 +800,39 @@ Le rapport détaillé est disponible au téléchargement.
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">
                   {previewType === 'before' ? '📋 Données Originales' : '✨ Données Nettoyées'}
-                  <span className="text-sm font-normal text-gray-500 ml-2">
-                    ({previewData.total_rows.toLocaleString()} lignes × {previewData.columns.length} colonnes)
-                  </span>
+                  <span className="text-sm font-normal text-gray-500 ml-2">({previewData.total_rows.toLocaleString()} lignes × {previewData.columns.length} colonnes)</span>
                 </h2>
-                {previewType === 'before' && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    💡 Survolez les cellules colorées pour voir les problèmes détectés
-                  </p>
-                )}
+                {previewType === 'before' && <p className="text-xs text-gray-500 mt-1">💡 Survolez les cellules colorées pour voir les problèmes détectés</p>}
               </div>
-              <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
-                <X className="w-6 h-6" />
-              </button>
+              <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600 transition-colors"><X className="w-6 h-6" /></button>
             </div>
-
             <div className="flex-1 overflow-auto p-4" style={{ maxHeight: 'calc(95vh - 140px)' }}>
               <div className="inline-block min-w-full">
                 <table className="border-collapse border border-gray-300">
                   <thead className="bg-gray-100 sticky top-0 z-10">
                     <tr>
-                      <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 bg-gray-100 sticky left-0 z-20">
-                        #
-                      </th>
+                      <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 bg-gray-100 sticky left-0 z-20">#</th>
                       {previewData.columns.map((col: string, i: number) => (
-                        <th key={i} className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">
-                          {col}
-                        </th>
+                        <th key={i} className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 whitespace-nowrap">{col}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {previewData.rows.map((row: any[], rowIdx: number) => (
                       <tr key={rowIdx} className="hover:bg-gray-50 transition-colors">
-                        <td className="border border-gray-300 px-3 py-2 text-xs text-gray-500 bg-gray-50 sticky left-0 z-10 font-medium">
-                          {rowIdx + 1}
-                        </td>
+                        <td className="border border-gray-300 px-3 py-2 text-xs text-gray-500 bg-gray-50 sticky left-0 z-10 font-medium">{rowIdx + 1}</td>
                         {row.map((cell: any, cellIdx: number) => {
                           const colName = previewData.columns[cellIdx];
                           const issues = previewType === 'before' ? getCellIssues(cell, colName, rowIdx) : [];
                           const hasIssues = issues.length > 0;
                           const primaryIssue = issues[0];
-
                           return (
-                            <td
-                              key={cellIdx}
-                              className={`border border-gray-300 px-3 py-2 text-sm text-gray-800 whitespace-nowrap relative group ${
-                                hasIssues ? `${primaryIssue.color} border-2` : ''
-                              }`}
+                            <td key={cellIdx}
+                              className={`border border-gray-300 px-3 py-2 text-sm text-gray-800 whitespace-nowrap relative group ${hasIssues ? `${primaryIssue.color} border-2` : ''}`}
                               onMouseEnter={() => hasIssues && setHoveredCell({ row: rowIdx, col: cellIdx })}
-                              onMouseLeave={() => setHoveredCell(null)}
-                            >
+                              onMouseLeave={() => setHoveredCell(null)}>
                               <div className="flex items-center gap-1">
-                                {hasIssues && (
-                                  <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
-                                )}
+                                {hasIssues && <AlertCircle className="w-3 h-3 text-red-500 flex-shrink-0" />}
                                 {cell === null || cell === undefined || cell === '' ? (
                                   <span className="text-gray-400 italic text-xs">∅ vide</span>
                                 ) : typeof cell === 'number' ? (
@@ -1189,12 +841,10 @@ Le rapport détaillé est disponible au téléchargement.
                                   <span className={hasIssues ? 'font-medium' : ''}>{String(cell)}</span>
                                 )}
                               </div>
-
                               {hasIssues && hoveredCell?.row === rowIdx && hoveredCell?.col === cellIdx && (
                                 <div className="absolute z-50 left-0 top-full mt-1 w-72 bg-gray-900 text-white text-xs rounded-lg shadow-xl p-3 pointer-events-none">
                                   <div className="font-semibold mb-2 flex items-center gap-2">
-                                    <AlertCircle className="w-4 h-4" />
-                                    {issues.length} problème{issues.length > 1 ? 's' : ''} détecté{issues.length > 1 ? 's' : ''}
+                                    <AlertCircle className="w-4 h-4" />{issues.length} problème{issues.length > 1 ? 's' : ''} détecté{issues.length > 1 ? 's' : ''}
                                   </div>
                                   <div className="space-y-2">
                                     {issues.map((issue, idx) => (
@@ -1216,35 +866,18 @@ Le rapport détaillé est disponible au téléchargement.
                 </table>
               </div>
             </div>
-
             {previewType === 'before' && (
               <div className="border-t border-gray-200 p-4 bg-gray-50 flex-shrink-0">
                 <div className="text-xs font-semibold text-gray-700 mb-2">Légende des problèmes :</div>
                 <div className="flex flex-wrap gap-3 text-xs">
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-yellow-100 border-2 border-yellow-400 rounded"></div>
-                    <span className="text-gray-600">Valeur manquante</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-red-100 border-2 border-red-400 rounded"></div>
-                    <span className="text-gray-600">Valeur aberrante</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-blue-100 border-2 border-blue-400 rounded"></div>
-                    <span className="text-gray-600">Emoji</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-purple-100 border-2 border-purple-400 rounded"></div>
-                    <span className="text-gray-600">Caractères spéciaux</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-4 h-4 bg-orange-100 border-2 border-orange-400 rounded"></div>
-                    <span className="text-gray-600">Format de date</span>
-                  </div>
+                  <div className="flex items-center gap-1"><div className="w-4 h-4 bg-yellow-100 border-2 border-yellow-400 rounded"></div><span className="text-gray-600">Valeur manquante</span></div>
+                  <div className="flex items-center gap-1"><div className="w-4 h-4 bg-red-100 border-2 border-red-400 rounded"></div><span className="text-gray-600">Valeur aberrante</span></div>
+                  <div className="flex items-center gap-1"><div className="w-4 h-4 bg-blue-100 border-2 border-blue-400 rounded"></div><span className="text-gray-600">Emoji</span></div>
+                  <div className="flex items-center gap-1"><div className="w-4 h-4 bg-purple-100 border-2 border-purple-400 rounded"></div><span className="text-gray-600">Caractères spéciaux</span></div>
+                  <div className="flex items-center gap-1"><div className="w-4 h-4 bg-orange-100 border-2 border-orange-400 rounded"></div><span className="text-gray-600">Format de date</span></div>
                 </div>
               </div>
             )}
-
             {previewData.total_rows > 100 && (
               <div className="text-center text-sm text-gray-500 p-3 bg-gray-50 rounded-b-lg border-t border-gray-200 flex-shrink-0">
                 Affichage des 100 premières lignes sur {previewData.total_rows.toLocaleString()}
