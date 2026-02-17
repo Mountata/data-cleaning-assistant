@@ -9,7 +9,7 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
 
-  // ── Mot de passe oublié ✅
+  // ── Mot de passe oublié
   const [showForgot, setShowForgot]       = useState(false);
   const [forgotEmail, setForgotEmail]     = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
@@ -17,7 +17,8 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
   const [forgotError, setForgotError]     = useState('');
 
   // ────────────────── CONNEXION ──────────────────
-  const handleSubmit = async (e?) => {
+  // ✅ CORRECTION : (e) au lieu de (e?) — JSX ne supporte pas TypeScript
+  const handleSubmit = async (e) => {
     if (e) e.preventDefault();
     setError('');
     setLoading(true);
@@ -35,7 +36,7 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
       } else {
         setError(data.error || 'Connexion échouée');
       }
-    } catch {
+    } catch (err) {
       setError('Erreur de connexion au serveur');
     }
     setLoading(false);
@@ -57,13 +58,12 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
       } else {
         setForgotError(data.error || 'Une erreur est survenue');
       }
-    } catch {
+    } catch (err) {
       setForgotError('Erreur de connexion au serveur');
     }
     setForgotLoading(false);
   };
 
-  // Ouvrir la vue "oublié" en pré-remplissant l'email déjà saisi
   const openForgot = () => {
     setForgotEmail(email);
     setForgotError('');
@@ -105,7 +105,6 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
 
               <h2 className="text-2xl font-bold text-gray-900 mb-2">Mot de passe oublié</h2>
 
-              {/* ── Succès ── */}
               {forgotSuccess ? (
                 <div className="text-center py-4">
                   <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
@@ -114,11 +113,9 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Email envoyé !</h3>
                   <p className="text-sm text-gray-600 mb-2">
                     Si <strong>{forgotEmail}</strong> est associé à un compte,
-                    vous recevrez un lien de réinitialisation dans quelques minutes.
+                    vous recevrez un lien dans quelques minutes.
                   </p>
-                  <p className="text-xs text-gray-400 mb-6">
-                    Vérifiez aussi vos spams / courriers indésirables.
-                  </p>
+                  <p className="text-xs text-gray-400 mb-6">Vérifiez aussi vos spams.</p>
                   <button
                     onClick={closeForgot}
                     className="w-full bg-gray-900 text-white py-3 rounded-lg hover:bg-gray-800 transition-colors font-medium"
@@ -128,11 +125,9 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
                 </div>
 
               ) : (
-                /* ── Formulaire oublié ── */
-                <>
+                <div>
                   <p className="text-sm text-gray-600 mb-6">
-                    Entrez votre adresse email et nous vous enverrons un lien pour réinitialiser
-                    votre mot de passe.
+                    Entrez votre email et nous vous enverrons un lien pour réinitialiser votre mot de passe.
                   </p>
 
                   {forgotError && (
@@ -166,19 +161,19 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
                     >
                       {forgotLoading ? (
                         <span className="flex items-center justify-center gap-2">
-                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent" />
+                          <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
                           Envoi en cours...
                         </span>
                       ) : 'Envoyer le lien de réinitialisation'}
                     </button>
                   </div>
-                </>
+                </div>
               )}
             </div>
 
           ) : (
 
-            /* ══════════ VUE CONNEXION (inchangée + lien oublié fonctionnel) ══════════ */
+            /* ══════════ VUE CONNEXION ══════════ */
             <div>
               <h2 className="text-2xl font-bold text-gray-900 mb-6">Connexion</h2>
 
@@ -227,7 +222,7 @@ const Login = ({ onLogin, onSwitchToRegister }) => {
                     <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900" />
                     <span className="ml-2 text-sm text-gray-600">Se souvenir de moi</span>
                   </label>
-                  {/* ✅ Bouton maintenant fonctionnel */}
+                  {/* ✅ Bouton fonctionnel */}
                   <button
                     type="button"
                     onClick={openForgot}
