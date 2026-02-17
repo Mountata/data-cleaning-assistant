@@ -12,13 +12,13 @@ import re
 import xml.etree.ElementTree as ET
 import logging
 from config import get_config, get_message
-from auth import auth_bp
+from auth import auth_bp, token_required  # ✅ AJOUT: importer token_required
 
 from zipfile import ZipFile
 from io import BytesIO
 
 from assistant import DataAssistant
-from docx import Document  #
+from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
@@ -28,8 +28,6 @@ app = Flask(__name__)
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 app.config['SECRET_KEY'] = SECRET_KEY
-# CORS(app)
-# Charger la configuration
 configclass = get_config()
 app.config.from_object(configclass)
 CORS(app,
@@ -41,12 +39,10 @@ CORS(app,
 
 app.register_blueprint(auth_bp, url_prefix="/api")
 
-# Utiliser /tmp sur Render (plan gratuit)
 if os.environ.get('RENDER'):
     UPLOAD_FOLDER = '/tmp/uploads'
     CLEANED_FOLDER = '/tmp/cleaned'
 else:
-    # En local
     UPLOAD_FOLDER = 'uploads'
     CLEANED_FOLDER = 'cleaned'
 
@@ -62,11 +58,9 @@ sessions_db = {}
 
 # -------------------- UTILITAIRES --------------------
 def convert_to_serializable(obj):
-    """Convertit les types NumPy en types Python natifs pour JSON"""
     if isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
-        # Convertir NaN et Inf en None
         if np.isnan(obj) or np.isinf(obj):
             return None
         return float(obj)
@@ -78,7 +72,7 @@ def convert_to_serializable(obj):
         return {k: convert_to_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_to_serializable(item) for item in obj]
-    elif pd.isna(obj):  # Gère NaN, NaT, None
+    elif pd.isna(obj):
         return None
     return obj
 
@@ -92,42 +86,31 @@ def allowed_file(filename):
 
 def load_file(filepath, file_extension):
     try:
-
         if file_extension == 'csv':
             encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
             separators = [',', ';', '\t', '|']
             for encoding in encodings:
                 for sep in separators:
                     try:
-                        df = pd.read_csv(
-                            filepath,
-                            encoding=encoding,
-                            sep=sep,
-                            on_bad_lines='skip'
-                        )
+                        df = pd.read_csv(filepath, encoding=encoding, sep=sep, on_bad_lines='skip')
                         if len(df.columns) > 1:
                             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
                             return df
                     except:
                         continue
-            # fallback si tout échoue
             df = pd.read_csv(filepath, encoding='utf-8', sep=',', on_bad_lines='skip')
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
-
-
         elif file_extension in ['xlsx', 'xls']:
             df = pd.read_excel(filepath)
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
-
         elif file_extension == 'json':
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             df = pd.DataFrame(data)
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
-
         elif file_extension == 'xml':
             tree = ET.parse(filepath)
             root = tree.getroot()
@@ -138,7 +121,6 @@ def load_file(filepath, file_extension):
             df = pd.DataFrame(data)
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
-
         else:
             raise ValueError(f"Extension {file_extension} non supportée")
     except Exception as e:
@@ -208,32 +190,16 @@ class DataAnalyzer:
 
     @staticmethod
     def detect_duplicates(df, uniqueness_threshold=0.95):
-        """
-        Détecte les doublons exacts et structurels dans le DataFrame.
-
-        Args:
-            df (pd.DataFrame): Le DataFrame à analyser
-            uniqueness_threshold (float): Seuil pour considérer une colonne comme ID probable
-
-        Returns:
-            dict: {"exact_duplicates", "structural_duplicates", "used_columns"}
-        """
-        # 1️⃣ Doublons exacts
         exact_count = int(df.duplicated().sum())
-
-        # 2️⃣ Colonnes candidates pour doublons structurels (non ID)
         candidate_cols = []
         for col in df.columns:
             uniqueness_ratio = df[col].nunique(dropna=True) / len(df)
             if uniqueness_ratio < uniqueness_threshold:
                 candidate_cols.append(col)
-
-        # 3️⃣ Doublons structurels
         if candidate_cols:
             structural_count = int(df.duplicated(subset=candidate_cols).sum())
         else:
             structural_count = 0
-
         return {
             "exact_duplicates": exact_count,
             "structural_duplicates": structural_count,
@@ -269,18 +235,14 @@ class DataAnalyzer:
                                            "]+", flags=re.UNICODE)
                 emojis = df[col].apply(lambda x: bool(emoji_pattern.search(str(x)))).sum()
                 if emojis > 0: col_issues['emojis'] = int(emojis)
-
                 extra_spaces = df[col].apply(lambda x: '  ' in str(x) or str(x) != str(x).strip()).sum()
                 if extra_spaces > 0: col_issues['spaces'] = int(extra_spaces)
-
                 special_chars = df[col].apply(lambda x: bool(re.search(r'[^a-zA-Z0-9\s\-_.,@]', str(x)))).sum()
                 if special_chars > 0: col_issues['specialChars'] = int(special_chars)
-
                 if df[col].nunique() < len(df) * 0.5:
                     values_lower = df[col].apply(lambda x: str(x).lower())
                     inconsistent = len(df[col].unique()) - len(values_lower.unique())
                     if inconsistent > 0: col_issues['inconsistentCase'] = int(inconsistent)
-
                 if col_issues: issues[col] = col_issues
         return issues
 
@@ -325,38 +287,20 @@ class DataAnalyzer:
 class DataCleaner:
     @staticmethod
     def remove_duplicates(df, uniqueness_threshold=0.95):
-        """
-        Supprime les doublons exacts et structurels du DataFrame.
-
-        Args:
-            df (pd.DataFrame): Le DataFrame à nettoyer
-            uniqueness_threshold (float): Seuil pour considérer une colonne comme ID probable
-
-        Returns:
-            tuple: (df nettoyé, dict des doublons supprimés)
-        """
         initial_len = len(df)
-
-        # 1️⃣ Doublons exacts
         exact_count = int(df.duplicated().sum())
         df = df.drop_duplicates()
-
-        # 2️⃣ Colonnes candidates pour doublons structurels
         candidate_cols = []
         for col in df.columns:
             uniqueness_ratio = df[col].nunique(dropna=True) / len(df)
             if uniqueness_ratio < uniqueness_threshold:
                 candidate_cols.append(col)
-
-        # 3️⃣ Supprimer les doublons structurels
         if candidate_cols:
             structural_count = int(df.duplicated(subset=candidate_cols).sum())
             df = df.drop_duplicates(subset=candidate_cols)
         else:
             structural_count = 0
-
-        # 4️⃣ Rapport des doublons supprimés
-        duplicates_removed = {
+        return df, {
             "exact_duplicates_removed": exact_count,
             "structural_duplicates_removed": structural_count,
             "used_columns": candidate_cols,
@@ -364,8 +308,6 @@ class DataCleaner:
             "initial_rows": initial_len,
             "final_rows": len(df)
         }
-
-        return df, duplicates_removed
 
     @staticmethod
     def handle_missing_values(df, column_types):
@@ -385,25 +327,8 @@ class DataCleaner:
 
     @staticmethod
     def remove_outliers(df, column_types, method='median'):
-        """
-        Traite les valeurs aberrantes avec différentes stratégies.
-
-        Args:
-            df (pd.DataFrame): Le DataFrame à traiter
-            column_types (dict): Types des colonnes
-            method (str): Méthode de traitement
-                - 'remove': Supprimer les lignes
-                - 'median': Remplacer par la médiane (par défaut - RECOMMANDÉ)
-                - 'cap': Plafonner aux limites IQR
-                - 'nan': Remplacer par NaN
-                - 'flag': Marquer avec une colonne booléenne
-
-        Returns:
-            tuple: (DataFrame traité, dict des résultats)
-        """
         initial = len(df)
         outliers_info = {}
-
         for col in df.columns:
             if column_types.get(col) == 'numeric':
                 Q1 = df[col].quantile(0.25)
@@ -411,30 +336,20 @@ class DataCleaner:
                 IQR = Q3 - Q1
                 lower = Q1 - 1.5 * IQR
                 upper = Q3 + 1.5 * IQR
-
-                # Identifier les outliers
                 mask = (df[col] < lower) | (df[col] > upper)
                 count = mask.sum()
-
                 if count > 0:
                     outliers_info[col] = int(count)
-
                     if method == 'remove':
-                        df = df[~mask]  # Suppression des lignes
-
+                        df = df[~mask]
                     elif method == 'median':
-                        median = df[col].median()
-                        df.loc[mask, col] = median  # Remplacement par médiane
-
+                        df.loc[mask, col] = df[col].median()
                     elif method == 'cap':
-                        df[col] = df[col].clip(lower=lower, upper=upper)  # Plafonnement
-
+                        df[col] = df[col].clip(lower=lower, upper=upper)
                     elif method == 'nan':
-                        df.loc[mask, col] = np.nan  # Marquage comme manquant
-
+                        df.loc[mask, col] = np.nan
                     elif method == 'flag':
-                        df[f'{col}_is_outlier'] = mask  # Nouvelle colonne booléenne
-
+                        df[f'{col}_is_outlier'] = mask
         return df, {
             'outliers_detected': outliers_info,
             'rows_removed': int(initial - len(df)) if method == 'remove' else 0,
@@ -465,9 +380,7 @@ class DataCleaner:
     def harmonize_dates(df, column_types):
         for col in df.columns:
             if column_types.get(col) == 'date_string':
-                # Convertir en datetime
                 df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
-                # Formater uniquement les dates valides, garder NaT comme NaN
                 df[col] = df[col].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else None)
         return df
 
@@ -483,64 +396,48 @@ class DataCleaner:
 
     @staticmethod
     def apply_cleaning(df, actions, column_types, outlier_method='median'):
-        """
-        Applique les actions de nettoyage sélectionnées.
-
-        Args:
-            df: DataFrame à nettoyer
-            actions: Liste des actions à appliquer
-            column_types: Types des colonnes
-            outlier_method: Méthode pour traiter les outliers (défaut: 'median')
-        """
         results = {'initial_rows': int(len(df)), 'actions_performed': []}
-
         if 'duplicates' in actions:
             df, removed = DataCleaner.remove_duplicates(df)
             results['duplicates_removed'] = removed
             results['actions_performed'].append('Suppression des doublons')
-
         if 'missing_values' in actions:
             df, corrected = DataCleaner.handle_missing_values(df, column_types)
             results['missing_corrected'] = corrected
             results['actions_performed'].append('Correction des valeurs manquantes')
-
         if 'outliers' in actions:
             df, outlier_results = DataCleaner.remove_outliers(df, column_types, method=outlier_method)
             results['outliers_removed'] = outlier_results['rows_removed']
             results['outliers_info'] = outlier_results
             results['actions_performed'].append(f'Traitement des outliers ({outlier_results["method_used"]})')
-
         if 'text_cleaning' in actions:
             df, corrections = DataCleaner.clean_text(df, column_types)
             results['text_normalized'] = corrections
             results['actions_performed'].append('Nettoyage des textes')
-
         if 'date_format' in actions:
             df = DataCleaner.harmonize_dates(df, column_types)
             results['actions_performed'].append('Harmonisation des dates')
-
         if 'case_normalization' in actions:
             df, corrections = DataCleaner.normalize_case(df, column_types)
             results['case_normalized'] = corrections
             results['actions_performed'].append('Normalisation de la casse')
-
         results['final_rows'] = int(len(df))
         results['columns'] = int(len(df.columns))
-
         return df, convert_to_serializable(results)
 
 
 # -------------------- ROUTES API --------------------
+
+# ✅ MODIFIÉ: @token_required + current_user_id + user_id dans la session
 @app.route('/api/upload', methods=['POST'])
-def upload_file():
+@token_required
+def upload_file(current_user_id):
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'Aucun fichier fourni'}), 400
-
         file = request.files['file']
         if file.filename == '':
             return jsonify({'error': 'Nom de fichier vide'}), 400
-
         if not allowed_file(file.filename):
             return jsonify({'error': 'Format non supporté'}), 400
 
@@ -559,75 +456,49 @@ def upload_file():
             'filepath': filepath,
             'dataframe': df,
             'analysis': analysis,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'user_id': current_user_id  # ✅ AJOUT
         }
 
-        return jsonify({
-            'session_id': session_id,
-            'filename': filename,
-            'analysis': analysis
-        }), 200
+        return jsonify({'session_id': session_id, 'filename': filename, 'analysis': analysis}), 200
 
     except Exception as e:
         logging.error(f"[UPLOAD ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/preview/<session_id>', methods=['GET'])
-def preview_data(session_id):
-    """Nouveau endpoint pour prévisualiser les données"""
-    try:
-        if session_id not in sessions_db:
-            return jsonify({'error': 'Session non trouvée'}), 404
-
-        session = sessions_db[session_id]
-        df = session['dataframe'].copy()
-
-        # Remplacer NaN par None avant conversion
-        df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
-
-        # Limite à 100 premières lignes pour la performance
-        preview_df = df.head(100)
-
-        # Convertir en liste en gérant les valeurs spéciales
-        rows = []
-        for _, row in preview_df.iterrows():
-            row_data = []
-            for val in row:
-                if pd.isna(val) or val is None:
-                    row_data.append(None)
-                elif isinstance(val, (np.integer, np.int64)):
-                    row_data.append(int(val))
-                elif isinstance(val, (np.floating, np.float64)):
-                    if np.isnan(val) or np.isinf(val):
-                        row_data.append(None)
-                    else:
-                        row_data.append(float(val))
-                else:
-                    row_data.append(str(val))
-            rows.append(row_data)
-
-        data = {
-            'columns': [str(col) for col in df.columns],
-            'rows': rows,
-            'total_rows': int(len(session['dataframe']))
-        }
-
-        return jsonify(data), 200
-
-    except Exception as e:
-        logging.error(f"[PREVIEW ERROR] {str(e)}")
-        return jsonify({'error': str(e)}), 500
+# ✅ MODIFIÉ: @token_required + filtrage par user_id
+@app.route('/api/sessions', methods=['GET'])
+@token_required
+def get_sessions(current_user_id):
+    sessions_list = []
+    for sid, session in sessions_db.items():
+        if session.get('user_id') == current_user_id:  # ✅ FILTRAGE
+            sessions_list.append({
+                'session_id': sid,
+                'filename': session['filename'],
+                'timestamp': session['timestamp'],
+                'rows': session['analysis']['rows'],
+                'columns': session['analysis']['columns'],
+                'status': session.get('status', 'uploaded')
+            })
+    # Trier par timestamp décroissant
+    sessions_list.sort(key=lambda x: x['timestamp'], reverse=True)
+    return jsonify({'sessions': sessions_list}), 200
 
 
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/session/<session_id>', methods=['GET'])
-def get_session_details(session_id):
-    """Récupère les détails complets d'une session pour restauration"""
+@token_required
+def get_session_details(current_user_id, session_id):
     try:
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
+
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
 
         response_data = {
             'session_id': session_id,
@@ -637,8 +508,6 @@ def get_session_details(session_id):
             'analysis': session['analysis'],
             'status': session.get('status', 'uploaded')
         }
-
-        # Ajouter les résultats de nettoyage si disponibles
         if 'cleaning_results' in session and 'cleaned_filepath' in session:
             response_data['cleaning_results'] = {
                 'results': session['cleaning_results'],
@@ -654,27 +523,27 @@ def get_session_details(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/clean', methods=['POST'])
-def clean_data():
+@token_required
+def clean_data(current_user_id):
     try:
         data = request.json
         session_id = data.get('session_id')
         actions = data.get('actions', [])
-        outlier_method = data.get('outlier_method', 'median')  # Par défaut: median (recommandé)
+        outlier_method = data.get('outlier_method', 'median')
 
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
+
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
         df = session['dataframe'].copy()
         column_types = session['analysis']['column_types']
-
-        cleaned_df, results = DataCleaner.apply_cleaning(
-            df,
-            actions,
-            column_types,
-            outlier_method=outlier_method
-        )
+        cleaned_df, results = DataCleaner.apply_cleaning(df, actions, column_types, outlier_method=outlier_method)
 
         cleaned_filename = f"cleaned_{session['filename']}"
         cleaned_filepath = os.path.join(app.config['CLEANED_FOLDER'], f"{session_id}_{cleaned_filename}")
@@ -686,38 +555,30 @@ def clean_data():
         session['cleaning_results'] = results
         session['status'] = 'cleaned'
 
-        return jsonify({
-            'session_id': session_id,
-            'results': results,
-            'download_filename': cleaned_filename
-        }), 200
+        return jsonify({'session_id': session_id, 'results': results, 'download_filename': cleaned_filename}), 200
 
     except Exception as e:
         logging.error(f"[CLEAN ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/preview-cleaned/<session_id>', methods=['GET'])
-def preview_cleaned_data(session_id):
-    """Prévisualiser les données nettoyées"""
+# ✅ MODIFIÉ: @token_required + vérification appartenance
+@app.route('/api/preview/<session_id>', methods=['GET'])
+@token_required
+def preview_data(current_user_id, session_id):
     try:
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
 
-        if 'cleaned_dataframe' not in session:
-            return jsonify({'error': 'Données nettoyées non disponibles'}), 404
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
 
-        df = session['cleaned_dataframe'].copy()
-
-        # Remplacer NaN par None avant conversion
+        df = session['dataframe'].copy()
         df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
-
-        # Limite à 100 premières lignes
         preview_df = df.head(100)
 
-        # Convertir en liste en gérant les valeurs spéciales
         rows = []
         for _, row in preview_df.iterrows():
             row_data = []
@@ -727,111 +588,118 @@ def preview_cleaned_data(session_id):
                 elif isinstance(val, (np.integer, np.int64)):
                     row_data.append(int(val))
                 elif isinstance(val, (np.floating, np.float64)):
-                    if np.isnan(val) or np.isinf(val):
-                        row_data.append(None)
-                    else:
-                        row_data.append(float(val))
+                    row_data.append(None if (np.isnan(val) or np.isinf(val)) else float(val))
                 else:
                     row_data.append(str(val))
             rows.append(row_data)
 
-        data = {
+        return jsonify({
             'columns': [str(col) for col in df.columns],
             'rows': rows,
-            'total_rows': int(len(session['cleaned_dataframe']))
-        }
-
-        return jsonify(data), 200
+            'total_rows': int(len(session['dataframe']))
+        }), 200
 
     except Exception as e:
-        logging.error(f"[PREVIEW CLEANED ERROR] {str(e)}")
+        logging.error(f"[PREVIEW ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/download/<session_id>', methods=['GET'])
-def download_file(session_id):
+# ✅ MODIFIÉ: @token_required + vérification appartenance
+@app.route('/api/preview-cleaned/<session_id>', methods=['GET'])
+@token_required
+def preview_cleaned_data(current_user_id, session_id):
     try:
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
 
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
+        if 'cleaned_dataframe' not in session:
+            return jsonify({'error': 'Données nettoyées non disponibles'}), 404
+
+        df = session['cleaned_dataframe'].copy()
+        df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
+        preview_df = df.head(100)
+
+        rows = []
+        for _, row in preview_df.iterrows():
+            row_data = []
+            for val in row:
+                if pd.isna(val) or val is None:
+                    row_data.append(None)
+                elif isinstance(val, (np.integer, np.int64)):
+                    row_data.append(int(val))
+                elif isinstance(val, (np.floating, np.float64)):
+                    row_data.append(None if (np.isnan(val) or np.isinf(val)) else float(val))
+                else:
+                    row_data.append(str(val))
+            rows.append(row_data)
+
+        return jsonify({
+            'columns': [str(col) for col in df.columns],
+            'rows': rows,
+            'total_rows': int(len(session['cleaned_dataframe']))
+        }), 200
+
+    except Exception as e:
+        logging.error(f"[PREVIEW CLEANED ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ✅ MODIFIÉ: @token_required + vérification appartenance
+@app.route('/api/download/<session_id>', methods=['GET'])
+@token_required
+def download_file(current_user_id, session_id):
+    try:
+        if session_id not in sessions_db:
+            return jsonify({'error': 'Session non trouvée'}), 404
+
+        session = sessions_db[session_id]
+
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
         if 'cleaned_filepath' not in session:
             return jsonify({'error': 'Fichier nettoyé non disponible'}), 404
 
-        return send_file(
-            session['cleaned_filepath'],
-            as_attachment=True,
-            download_name=session['cleaned_filename']
-        )
+        return send_file(session['cleaned_filepath'], as_attachment=True, download_name=session['cleaned_filename'])
 
     except Exception as e:
         logging.error(f"[DOWNLOAD ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/sessions', methods=['GET'])
-def get_sessions():
-    sessions_list = []
-    for sid, session in sessions_db.items():
-        sessions_list.append({
-            'session_id': sid,
-            'filename': session['filename'],
-            'timestamp': session['timestamp'],
-            'rows': session['analysis']['rows'],
-            'columns': session['analysis']['columns'],
-            'status': session.get('status', 'uploaded')
-        })
-    return jsonify({'sessions': sessions_list}), 200
-
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat()
-    }), 200
-
-
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/download-multiple', methods=['POST'])
-def download_multiple():
-    """Télécharge plusieurs fichiers nettoyés en un seul ZIP"""
+@token_required
+def download_multiple(current_user_id):
     try:
         data = request.json
         session_ids = data.get('session_ids', [])
 
-        if not session_ids or len(session_ids) == 0:
+        if not session_ids:
             return jsonify({'error': 'Aucune session sélectionnée'}), 400
-
         if len(session_ids) > 10:
             return jsonify({'error': 'Maximum 10 fichiers à la fois'}), 400
 
-        # Créer un fichier ZIP en mémoire
         zip_buffer = BytesIO()
-
         with ZipFile(zip_buffer, 'w') as zip_file:
             for session_id in session_ids:
                 if session_id not in sessions_db:
                     continue
-
                 session = sessions_db[session_id]
-
-                # Vérifier que le fichier nettoyé existe
+                if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+                    continue
                 if 'cleaned_filepath' not in session:
                     continue
-
                 if not os.path.exists(session['cleaned_filepath']):
                     continue
+                zip_file.write(session['cleaned_filepath'], arcname=session['cleaned_filename'])
 
-                # Ajouter le fichier au ZIP
-                zip_file.write(
-                    session['cleaned_filepath'],
-                    arcname=session['cleaned_filename']
-                )
-
-        # Préparer le buffer pour l'envoi
         zip_buffer.seek(0)
-
         return send_file(
             zip_buffer,
             mimetype='application/zip',
@@ -844,11 +712,10 @@ def download_multiple():
         return jsonify({'error': str(e)}), 500
 
 
-# ==================== ROUTES ASSISTANT ====================
-
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/chat/recommend', methods=['POST'])
-def get_recommendations():
-    """Génère des recommandations personnalisées"""
+@token_required
+def get_recommendations(current_user_id):
     try:
         data = request.json
         session_id = data.get('session_id')
@@ -857,23 +724,24 @@ def get_recommendations():
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
-        assistant = DataAssistant(session['dataframe'], session['analysis'])
 
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
+        assistant = DataAssistant(session['dataframe'], session['analysis'])
         recommendations = assistant.generate_recommendations()
 
-        return jsonify({
-            'recommendations': recommendations,
-            'count': len(recommendations)
-        }), 200
+        return jsonify({'recommendations': recommendations, 'count': len(recommendations)}), 200
 
     except Exception as e:
         logging.error(f"[RECOMMEND ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/chat/ask', methods=['POST'])
-def ask_question():
-    """Répond à une question de l'utilisateur"""
+@token_required
+def ask_question(current_user_id):
     try:
         data = request.json
         session_id = data.get('session_id')
@@ -881,13 +749,15 @@ def ask_question():
 
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
-
         if not question:
             return jsonify({'error': 'Question vide'}), 400
 
         session = sessions_db[session_id]
-        assistant = DataAssistant(session['dataframe'], session['analysis'])
 
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
+        assistant = DataAssistant(session['dataframe'], session['analysis'])
         answer = assistant.answer_question(question)
 
         return jsonify(answer), 200
@@ -897,9 +767,10 @@ def ask_question():
         return jsonify({'error': str(e)}), 500
 
 
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/chat/generate-report', methods=['POST'])
-def generate_report():
-    """Génère un rapport Word détaillé"""
+@token_required
+def generate_report(current_user_id):
     try:
         data = request.json
         session_id = data.get('session_id')
@@ -908,36 +779,33 @@ def generate_report():
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
+
+        if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
         assistant = DataAssistant(session['dataframe'], session['analysis'])
         recommendations = assistant.generate_recommendations()
 
-        # Créer le document Word
         doc = Document()
-
-        # Titre
         title = doc.add_heading('Rapport d\'Analyse de Qualité des Données', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-        # Informations générales
         doc.add_heading('📊 Informations Générales', level=1)
         doc.add_paragraph(f"Fichier : {session['filename']}")
         doc.add_paragraph(f"Date d'analyse : {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         doc.add_paragraph(f"Nombre de lignes : {session['analysis']['rows']:,}")
         doc.add_paragraph(f"Nombre de colonnes : {session['analysis']['columns']}")
 
-        # Score de qualité
         dup = session['analysis'].get('duplicates', {})
         missing = session['analysis'].get('missing_values', {})
         total_dup = dup.get('exact_duplicates', 0) + dup.get('structural_duplicates', 0)
         total_missing = sum(v.get('count', 0) for v in missing.values())
-
         quality_score = assistant._calculate_quality_score(total_dup, total_missing)
 
         doc.add_heading('🎯 Score de Qualité', level=1)
         score_para = doc.add_paragraph(f"Score : {quality_score}/100")
         score_para.runs[0].font.size = Pt(16)
         score_para.runs[0].font.bold = True
-
         if quality_score >= 80:
             score_para.runs[0].font.color.rgb = RGBColor(34, 139, 34)
             doc.add_paragraph("✅ Excellente qualité")
@@ -948,19 +816,15 @@ def generate_report():
             score_para.runs[0].font.color.rgb = RGBColor(220, 20, 60)
             doc.add_paragraph("⚠️ Nettoyage recommandé")
 
-        # Recommandations
         doc.add_heading('💡 Recommandations', level=1)
-
         for i, rec in enumerate(recommendations, 1):
             doc.add_heading(f"{i}. {rec['title']}", level=2)
             doc.add_paragraph(f"Priorité : {rec['priority'].upper()}")
             doc.add_paragraph(f"Impact : {rec['impact']}")
-            doc.add_paragraph(f"Justification :")
-            doc.add_paragraph(rec['justification'])
+            doc.add_paragraph(f"Justification : {rec['justification']}")
             doc.add_paragraph(f"Recommandé : {'✅ Oui' if rec['recommended'] else '⚠️ Optionnel'}")
-            doc.add_paragraph("")  # Espace
+            doc.add_paragraph("")
 
-        # Sauvegarder
         report_filename = f"rapport_{session_id}.docx"
         report_path = os.path.join(app.config['CLEANED_FOLDER'], report_filename)
         doc.save(report_path)
@@ -976,10 +840,16 @@ def generate_report():
         return jsonify({'error': str(e)}), 500
 
 
+# ✅ MODIFIÉ: @token_required + vérification appartenance
 @app.route('/api/download-report/<session_id>', methods=['GET'])
-def download_report(session_id):
-    """Télécharge le rapport Word"""
+@token_required
+def download_report(current_user_id, session_id):
     try:
+        if session_id in sessions_db:
+            session = sessions_db[session_id]
+            if session.get('user_id') != current_user_id:  # ✅ VÉRIFICATION
+                return jsonify({'error': 'Accès non autorisé'}), 403
+
         report_filename = f"rapport_{session_id}.docx"
         report_path = os.path.join(app.config['CLEANED_FOLDER'], report_filename)
 
@@ -995,6 +865,11 @@ def download_report(session_id):
     except Exception as e:
         logging.error(f"[DOWNLOAD REPORT ERROR] {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
 
 
 if __name__ == '__main__':
