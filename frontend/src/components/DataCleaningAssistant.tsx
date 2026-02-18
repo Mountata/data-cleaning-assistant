@@ -34,23 +34,17 @@ interface Message {
 interface Session {
   session_id: string; filename: string; status: string;
   timestamp: string; rows: number; columns: number;
+  operation_count?: number;
 }
 
-/** Options configurable per action */
 interface ActionOptions {
-  // missing values
   numericStrategy?: 'mean' | 'median' | 'mode' | 'zero' | 'drop';
   textStrategy?: 'mode' | 'empty' | 'drop';
-  // mixed columns
   mixedStrategy?: 'to_numeric' | 'replace_median' | 'replace_mean' | 'drop_rows';
-  // outliers
   outlierMethod?: 'median' | 'mean' | 'cap' | 'nan' | 'remove' | 'flag';
-  // text cleaning
   removeEmojis?: boolean; removeSpecialChars?: boolean;
   trimSpaces?: boolean; deduplicateSpaces?: boolean;
-  // date
   targetFormat?: 'YYYY-MM-DD' | 'DD/MM/YYYY' | 'MM/DD/YYYY';
-  // case
   caseStyle?: 'title' | 'lower' | 'upper';
 }
 
@@ -62,17 +56,20 @@ interface CleaningAction {
   showOptions: boolean;
 }
 
-/** One recorded operation in the session history */
+/** One recorded operation — peut venir du backend ou du state local */
 interface HistoryEntry {
-  id: string; timestamp: Date; actionId: string; actionTitle: string;
-  options: ActionOptions; result?: string; status: 'success' | 'error' | 'pending';
+  id: string;
+  timestamp: Date;
+  actionTitle: string;   // label lisible
+  options: ActionOptions;
+  result?: string;
+  status: 'success' | 'error' | 'pending';
 }
 
 interface HoveredCell { row: number; col: number }
-
 interface Props { user: UserInfo; onLogout: () => void }
 
-// ─── Option descriptions helpers ─────────────────────────────────────────────
+// ─── Labels ───────────────────────────────────────────────────────────────────
 const numericStrategyLabels: Record<string, string> = {
   mean:   '📐 Remplacer par la moyenne',
   median: '📊 Remplacer par la médiane (recommandé)',
@@ -110,7 +107,43 @@ const dateFormatLabels: Record<string, string> = {
   'MM/DD/YYYY': '📅 US : 01/31/2024',
 };
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Transforme une entrée d'historique brute venant du backend en HistoryEntry.
+ * Le backend stocke actions[] + options + results_summary.
+ */
+const backendEntryToHistoryEntry = (be: any): HistoryEntry => {
+  const summary = be.results_summary || {};
+  const actions: string[] = be.actions || [];
+
+  // Libellé synthétique à partir des actions effectuées
+  const actionLabel = summary.actions_performed?.join(' · ')
+    || actions.join(', ')
+    || 'Nettoyage';
+
+  const result = summary.initial_rows != null
+    ? `${summary.initial_rows} → ${summary.final_rows} lignes`
+    : undefined;
+
+  return {
+    id: be.id,
+    timestamp: new Date(be.timestamp),
+    actionTitle: actionLabel,
+    options: be.options || {},
+    result,
+    status: be.status === 'success' ? 'success' : be.status === 'error' ? 'error' : 'pending',
+  };
+};
+
 // ─── Sub-option panels ────────────────────────────────────────────────────────
+const InfoBox: React.FC<{ text: string }> = ({ text }) => (
+  <div className="flex items-start gap-2 text-xs text-gray-500 mt-1">
+    <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+    <span>{text}</span>
+  </div>
+);
+
 const MissingValuesOptions: React.FC<{
   opts: ActionOptions; onChange: (o: Partial<ActionOptions>) => void
 }> = ({ opts, onChange }) => (
@@ -150,8 +183,7 @@ const MissingValuesOptions: React.FC<{
 );
 
 const MixedColumnsOptions: React.FC<{
-  opts: ActionOptions; onChange: (o: Partial<ActionOptions>) => void;
-  mixedCols: string[];
+  opts: ActionOptions; onChange: (o: Partial<ActionOptions>) => void; mixedCols: string[];
 }> = ({ opts, onChange, mixedCols }) => (
   <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg p-4 space-y-3 text-sm">
     <div className="flex items-start gap-2 text-orange-800 font-medium">
@@ -164,17 +196,12 @@ const MixedColumnsOptions: React.FC<{
         {Object.entries(mixedStrategyLabels).map(([k, v]) => (
           <label key={k} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
             (opts.mixedStrategy || 'replace_median') === k
-              ? 'border-orange-400 bg-orange-100'
-              : 'border-gray-200 bg-white hover:border-orange-200'
+              ? 'border-orange-400 bg-orange-100' : 'border-gray-200 bg-white hover:border-orange-200'
           }`}>
-            <input
-              type="radio"
-              name="mixed-strategy"
-              value={k}
+            <input type="radio" name="mixed-strategy" value={k}
               checked={(opts.mixedStrategy || 'replace_median') === k}
               onChange={() => onChange({ mixedStrategy: k as any })}
-              className="text-orange-500"
-            />
+              className="text-orange-500" />
             <span>{v}</span>
           </label>
         ))}
@@ -193,17 +220,12 @@ const OutliersOptions: React.FC<{
       {Object.entries(outlierMethodLabels).map(([k, v]) => (
         <label key={k} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
           (opts.outlierMethod || 'median') === k
-            ? 'border-red-400 bg-red-100'
-            : 'border-gray-200 bg-white hover:border-red-200'
+            ? 'border-red-400 bg-red-100' : 'border-gray-200 bg-white hover:border-red-200'
         }`}>
-          <input
-            type="radio"
-            name="outlier-method"
-            value={k}
+          <input type="radio" name="outlier-method" value={k}
             checked={(opts.outlierMethod || 'median') === k}
             onChange={() => onChange({ outlierMethod: k as any })}
-            className="text-red-500"
-          />
+            className="text-red-500" />
           <span>{v}</span>
         </label>
       ))}
@@ -217,18 +239,15 @@ const TextCleaningOptions: React.FC<{
   <div className="mt-3 bg-indigo-50 border border-indigo-200 rounded-lg p-4 space-y-2 text-sm">
     <label className="font-semibold text-gray-700 block mb-2">Sélectionnez les nettoyages à appliquer</label>
     {([
-      ['removeEmojis', '😊 Supprimer les emojis'],
+      ['removeEmojis',       '😊 Supprimer les emojis'],
       ['removeSpecialChars', '# Supprimer les caractères spéciaux'],
-      ['trimSpaces', '▶ Supprimer les espaces en début/fin'],
-      ['deduplicateSpaces', '⎵ Réduire les espaces multiples'],
+      ['trimSpaces',         '▶ Supprimer les espaces en début/fin'],
+      ['deduplicateSpaces',  '⎵ Réduire les espaces multiples'],
     ] as [keyof ActionOptions, string][]).map(([key, label]) => (
       <label key={key} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-indigo-100 transition-colors">
-        <input
-          type="checkbox"
-          checked={(opts[key] as boolean) !== false}
+        <input type="checkbox" checked={(opts[key] as boolean) !== false}
           onChange={e => onChange({ [key]: e.target.checked })}
-          className="w-4 h-4 text-indigo-600 rounded"
-        />
+          className="w-4 h-4 text-indigo-600 rounded" />
         <span>{label}</span>
       </label>
     ))}
@@ -240,24 +259,18 @@ const DateOptions: React.FC<{
 }> = ({ opts, onChange }) => (
   <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-4 space-y-2 text-sm">
     <label className="font-semibold text-gray-700 block mb-2">
-      <Calendar className="w-3.5 h-3.5 inline mr-1 text-green-600" />
-      Format cible
+      <Calendar className="w-3.5 h-3.5 inline mr-1 text-green-600" />Format cible
     </label>
     <div className="space-y-2">
       {Object.entries(dateFormatLabels).map(([k, v]) => (
         <label key={k} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
           (opts.targetFormat || 'YYYY-MM-DD') === k
-            ? 'border-green-400 bg-green-100'
-            : 'border-gray-200 bg-white hover:border-green-200'
+            ? 'border-green-400 bg-green-100' : 'border-gray-200 bg-white hover:border-green-200'
         }`}>
-          <input
-            type="radio"
-            name="date-format"
-            value={k}
+          <input type="radio" name="date-format" value={k}
             checked={(opts.targetFormat || 'YYYY-MM-DD') === k}
             onChange={() => onChange({ targetFormat: k as any })}
-            className="text-green-500"
-          />
+            className="text-green-500" />
           <span>{v}</span>
         </label>
       ))}
@@ -274,17 +287,12 @@ const CaseOptions: React.FC<{
       {Object.entries(caseStyleLabels).map(([k, v]) => (
         <label key={k} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
           (opts.caseStyle || 'title') === k
-            ? 'border-cyan-400 bg-cyan-100'
-            : 'border-gray-200 bg-white hover:border-cyan-200'
+            ? 'border-cyan-400 bg-cyan-100' : 'border-gray-200 bg-white hover:border-cyan-200'
         }`}>
-          <input
-            type="radio"
-            name="case-style"
-            value={k}
+          <input type="radio" name="case-style" value={k}
             checked={(opts.caseStyle || 'title') === k}
             onChange={() => onChange({ caseStyle: k as any })}
-            className="text-cyan-500"
-          />
+            className="text-cyan-500" />
           <span>{v}</span>
         </label>
       ))}
@@ -292,15 +300,12 @@ const CaseOptions: React.FC<{
   </div>
 );
 
-const InfoBox: React.FC<{ text: string }> = ({ text }) => (
-  <div className="flex items-start gap-2 text-xs text-gray-500 mt-1">
-    <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-    <span>{text}</span>
-  </div>
-);
-
 // ─── History Panel ────────────────────────────────────────────────────────────
-const HistoryPanel: React.FC<{ history: HistoryEntry[]; onClose: () => void }> = ({ history, onClose }) => (
+const HistoryPanel: React.FC<{
+  history: HistoryEntry[];
+  isLoading: boolean;
+  onClose: () => void;
+}> = ({ history, isLoading, onClose }) => (
   <div className="fixed inset-y-0 right-0 w-96 bg-white border-l border-gray-200 shadow-2xl z-50 flex flex-col">
     <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50">
       <div className="flex items-center gap-2">
@@ -312,19 +317,25 @@ const HistoryPanel: React.FC<{ history: HistoryEntry[]; onClose: () => void }> =
       </button>
     </div>
     <div className="flex-1 overflow-y-auto p-4 space-y-3">
-      {history.length === 0 && (
+      {isLoading && (
+        <div className="flex items-center justify-center py-12 gap-2 text-gray-400 text-sm">
+          <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-300 border-t-gray-600" />
+          Chargement…
+        </div>
+      )}
+      {!isLoading && history.length === 0 && (
         <div className="text-center text-sm text-gray-400 py-12">
           <History className="w-10 h-10 mx-auto mb-3 opacity-30" />
           Aucune opération enregistrée
         </div>
       )}
-      {history.map(entry => (
+      {!isLoading && history.map(entry => (
         <div key={entry.id} className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
                 entry.status === 'success' ? 'bg-green-500' :
-                entry.status === 'error' ? 'bg-red-500' : 'bg-yellow-400'
+                entry.status === 'error'   ? 'bg-red-500'   : 'bg-yellow-400'
               }`} />
               <div>
                 <div className="font-medium text-sm text-gray-900">{entry.actionTitle}</div>
@@ -339,14 +350,13 @@ const HistoryPanel: React.FC<{ history: HistoryEntry[]; onClose: () => void }> =
             </div>
             <span className={`text-xs px-2 py-1 rounded-full font-medium ${
               entry.status === 'success' ? 'bg-green-100 text-green-700' :
-              entry.status === 'error' ? 'bg-red-100 text-red-700' :
+              entry.status === 'error'   ? 'bg-red-100 text-red-700'     :
               'bg-yellow-100 text-yellow-700'
             }`}>
               {entry.status === 'success' ? '✓ OK' : entry.status === 'error' ? '✗ Erreur' : '⏳ En cours'}
             </span>
           </div>
 
-          {/* Options résumé */}
           <div className="mt-3 space-y-1 text-xs text-gray-600 bg-gray-50 rounded-lg p-3">
             {entry.options.numericStrategy && (
               <div><span className="text-gray-400">Num. manquants :</span> {numericStrategyLabels[entry.options.numericStrategy]}</div>
@@ -382,20 +392,14 @@ const HistoryPanel: React.FC<{ history: HistoryEntry[]; onClose: () => void }> =
 
 // ─── Suggestion chips ─────────────────────────────────────────────────────────
 const SuggestionChips: React.FC<{
-  suggestions: string[];
-  disabled: boolean;
-  onSelect: (s: string) => void;
+  suggestions: string[]; disabled: boolean; onSelect: (s: string) => void;
 }> = ({ suggestions, disabled, onSelect }) => {
   if (!suggestions?.length) return null;
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {suggestions.map((s, i) => (
-        <button
-          key={i}
-          disabled={disabled}
-          onClick={() => onSelect(s)}
-          className="text-xs px-3 py-1.5 bg-gray-50 hover:bg-blue-50 hover:text-blue-700 border border-gray-200 hover:border-blue-300 rounded-full transition-all text-gray-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-        >
+        <button key={i} disabled={disabled} onClick={() => onSelect(s)}
+          className="text-xs px-3 py-1.5 bg-gray-50 hover:bg-blue-50 hover:text-blue-700 border border-gray-200 hover:border-blue-300 rounded-full transition-all text-gray-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1">
           <Sparkles className="w-3 h-3" />{s}
         </button>
       ))}
@@ -405,34 +409,37 @@ const SuggestionChips: React.FC<{
 
 // ─── Main component ───────────────────────────────────────────────────────────
 const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [currentFile, setCurrentFile] = useState<any>(null);
-  const [analysisData, setAnalysisData] = useState<any>(null);
+  const [sessionId, setSessionId]             = useState<string | null>(null);
+  const [messages, setMessages]               = useState<Message[]>([]);
+  const [currentFile, setCurrentFile]         = useState<any>(null);
+  const [analysisData, setAnalysisData]       = useState<any>(null);
   const [cleaningActions, setCleaningActions] = useState<CleaningAction[]>([]);
-  const [step, setStep] = useState<string>('upload');
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewData, setPreviewData] = useState<any>(null);
-  const [previewType, setPreviewType] = useState<'before' | 'after'>('before');
-  const [isRestoring, setIsRestoring] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const [step, setStep]                       = useState<string>('upload');
+  const [sessions, setSessions]               = useState<Session[]>([]);
+  const [showPreview, setShowPreview]         = useState(false);
+  const [previewData, setPreviewData]         = useState<any>(null);
+  const [previewType, setPreviewType]         = useState<'before' | 'after'>('before');
+  const [isRestoring, setIsRestoring]         = useState(false);
+  const [showUserMenu, setShowUserMenu]       = useState(false);
+  const [hoveredCell, setHoveredCell]         = useState<HoveredCell | null>(null);
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [userQuestion, setUserQuestion] = useState('');
-  const [isAsking, setIsAsking] = useState(false);
+  const [isDownloading, setIsDownloading]     = useState(false);
+  const [userQuestion, setUserQuestion]       = useState('');
+  const [isAsking, setIsAsking]               = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  // ── Historique : stocké côté backend, chargé à la demande ─────────────────
   const [operationHistory, setOperationHistory] = useState<HistoryEntry[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [showHistory, setShowHistory]           = useState(false);
+
+  // ── Colonnes mixtes : renvoyées par le backend dans analysis.mixed_columns ─
   const [mixedColumns, setMixedColumns] = useState<string[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef   = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   useEffect(() => {
     if (messages.length === 0 && !isRestoring) {
@@ -447,18 +454,40 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setMessages(prev => [...prev, { sender, content, type, timestamp: new Date(), suggestions }]);
   };
 
-  const addHistoryEntry = (
-    actionId: string, actionTitle: string, options: ActionOptions,
-    status: 'success' | 'error' | 'pending' = 'pending', result?: string
+  // ── Charger l'historique depuis le backend pour une session ────────────────
+  const loadHistory = async (sid: string) => {
+    setIsHistoryLoading(true);
+    try {
+      const res = await authFetch(`${API_URL}/api/session/${sid}/history`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const entries: HistoryEntry[] = (data.history || []).map(backendEntryToHistoryEntry);
+      setOperationHistory(entries);
+    } catch {
+      // silently ignore — history just won't show
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  // ── Ouvrir l'historique et charger depuis le backend si nécessaire ─────────
+  const openHistory = async () => {
+    setShowHistory(true);
+    if (sessionId) {
+      await loadHistory(sessionId);
+    }
+  };
+
+  // ── Ajouter une entrée optimiste locale (avant retour backend) ─────────────
+  const addLocalHistoryEntry = (
+    actionTitle: string, options: ActionOptions
   ): string => {
     const id = crypto.randomUUID();
-    setOperationHistory(prev => [{
-      id, timestamp: new Date(), actionId, actionTitle, options, status, result
-    }, ...prev]);
+    setOperationHistory(prev => [{ id, timestamp: new Date(), actionTitle, options, status: 'pending' }, ...prev]);
     return id;
   };
 
-  const updateHistoryEntry = (id: string, status: 'success' | 'error', result?: string) => {
+  const updateLocalHistoryEntry = (id: string, status: 'success' | 'error', result?: string) => {
     setOperationHistory(prev => prev.map(e => e.id === id ? { ...e, status, result } : e));
   };
 
@@ -467,18 +496,15 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setIsAsking(true);
     addMessage('user', question);
     try {
-      const response = await authFetch(`${API_URL}/api/chat/ask`, {
-        method: 'POST',
-        body: JSON.stringify({ session_id: sessionId, question })
+      const res = await authFetch(`${API_URL}/api/chat/ask`, {
+        method: 'POST', body: JSON.stringify({ session_id: sessionId, question })
       });
-      if (!response.ok) throw new Error('Erreur lors de la réponse');
-      const data = await response.json();
+      if (!res.ok) throw new Error('Erreur lors de la réponse');
+      const data = await res.json();
       addMessage('bot', data.answer, 'text', data.suggestions);
     } catch {
       addMessage('bot', '❌ Erreur lors du traitement de votre question');
-    } finally {
-      setIsAsking(false);
-    }
+    } finally { setIsAsking(false); }
   };
 
   const loadSessions = async () => {
@@ -493,6 +519,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     try {
       setIsRestoring(true);
       setMessages([]);
+      setOperationHistory([]);
       addMessage('bot', `🔄 Restauration de la session "${s.filename}"...`);
       const res = await authFetch(`${API_URL}/api/session/${s.session_id}`);
       if (!res.ok) { addMessage('bot', '❌ Impossible de restaurer cette session.'); return; }
@@ -500,46 +527,44 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       setSessionId(s.session_id);
       setCurrentFile({ name: s.filename });
       setAnalysisData(full.analysis);
+
+      // ✅ Colonnes mixtes venant du backend (champ analysis.mixed_columns)
+      const backendMixed: string[] = full.analysis?.mixed_columns || [];
+      setMixedColumns(backendMixed);
+
+      // ✅ Historique persistant venant du backend
+      const histEntries: HistoryEntry[] = (full.operation_history || []).map(backendEntryToHistoryEntry);
+      setOperationHistory(histEntries);
+
       addMessage('bot', `✅ Session restaurée : ${s.filename}`);
       addMessage('bot', `📊 ${full.analysis.rows} lignes × ${full.analysis.columns} colonnes`);
+
+      if (backendMixed.length > 0) {
+        addMessage('bot', `⚠️ Colonnes mixtes détectées : ${backendMixed.join(', ')}`);
+      }
+
       if (s.status === 'cleaned' && full.cleaning_results) {
         setStep('results');
         displayRestoredResults(full.cleaning_results, s.session_id);
       } else {
         setStep('actions');
-        proposeActions(full.analysis);
+        proposeActions(full.analysis, backendMixed);
       }
-    } finally {
-      setIsRestoring(false);
-    }
+    } finally { setIsRestoring(false); }
   };
 
   const displayRestoredResults = (results: any, sid: string) => {
     if (!results?.results) return;
     const res = results.results;
     let summary = `✨ Cette session a déjà été nettoyée !\n\n`;
-    summary += `📊 Avant : ${res.initial_rows} lignes → Après : ${res.final_rows} lignes\n\n`;
-    summary += `✅ Actions effectuées :\n`;
-    if (res.duplicates_removed) summary += `• ${res.duplicates_removed.exact_duplicates_removed || 0} doublons exacts + ${res.duplicates_removed.structural_duplicates_removed || 0} structurels supprimés\n`;
-    if (res.missing_corrected) summary += `• ${res.missing_corrected} valeurs manquantes corrigées\n`;
-    if (res.outliers_removed) summary += `• ${res.outliers_removed} valeurs aberrantes traitées\n`;
-    if (res.text_normalized) summary += `• ${res.text_normalized} textes normalisés\n`;
+    summary += `📊 Avant : ${res.initial_rows} lignes → Après : ${res.final_rows} lignes\n\n✅ Actions effectuées :\n`;
+    if (res.duplicates_removed)  summary += `• ${res.duplicates_removed.exact_duplicates_removed || 0} doublons exacts + ${res.duplicates_removed.structural_duplicates_removed || 0} structurels supprimés\n`;
+    if (res.missing_corrected)   summary += `• ${res.missing_corrected} valeurs manquantes corrigées\n`;
+    if (res.outliers_removed)    summary += `• ${res.outliers_removed} valeurs aberrantes traitées\n`;
+    if (res.text_normalized)     summary += `• ${res.text_normalized} textes normalisés\n`;
     summary += `\n💡 Téléchargez le fichier nettoyé ou relancez une analyse.`;
     addMessage('bot', summary, 'results');
     addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sid}`, filename: results.cleaned_filename }, 'download');
-  };
-
-  // Detect mixed columns (numeric cols with text values)
-  const detectMixedColumns = (analysis: any): string[] => {
-    const mixed: string[] = [];
-    for (const [col, type] of Object.entries(analysis.column_types || {})) {
-      if (type === 'text') {
-        // heuristic: if text column name suggests numeric (bedroom, bath, sqft, num, count, qty…)
-        const numericKeywords = /num|count|qty|bedroom|bath|sqft|sq_ft|price|age|year|score|rate|amount/i;
-        if (numericKeywords.test(col)) mixed.push(col);
-      }
-    }
-    return mixed;
   };
 
   const defaultOptions = (): ActionOptions => ({
@@ -548,7 +573,12 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     trimSpaces: true, deduplicateSpaces: true, targetFormat: 'YYYY-MM-DD', caseStyle: 'title',
   });
 
-  const proposeActions = (analysis: any) => {
+  /**
+   * Propose les actions de nettoyage.
+   * mixedCols est toujours passé depuis le backend (analysis.mixed_columns),
+   * jamais deviné côté frontend.
+   */
+  const proposeActions = (analysis: any, mixedCols: string[] = []) => {
     if (!analysis) return;
     const missingCount = Object.values<any>(analysis.missing_values || {}).reduce((a, b) => a + (b?.count || 0), 0);
     const dups = analysis.duplicates || {};
@@ -560,8 +590,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       inconsistentCase += ti.inconsistentCase || 0;
     }
     const dateFormatsCount = Object.values<any>(analysis.date_formats || {}).reduce((a, v) => a + Math.max(0, (v?.length || 0) - 1), 0);
-    const detected = detectMixedColumns(analysis);
-    setMixedColumns(detected);
     const opts = defaultOptions();
 
     const actions: CleaningAction[] = [
@@ -579,9 +607,10 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         selected: false, risk: 'moyen', showOptions: false,
         icon: <Filter className="w-4 h-4" />, options: { ...opts },
       },
-      ...(detected.length > 0 ? [{
+      // ✅ L'action mixed_columns n'apparaît QUE si le backend a détecté des colonnes mixtes
+      ...(mixedCols.length > 0 ? [{
         id: 'mixed_columns', title: 'Nettoyer les colonnes mixtes',
-        description: `${detected.length} colonne(s) avec mélange numérique/texte : ${detected.slice(0, 3).join(', ')}${detected.length > 3 ? '…' : ''}`,
+        description: `${mixedCols.length} colonne(s) avec mélange numérique/texte : ${mixedCols.slice(0, 3).join(', ')}${mixedCols.length > 3 ? '…' : ''}`,
         impact: 'Conversion ou remplacement des valeurs texte dans colonnes numériques',
         selected: false, risk: 'moyen' as const, showOptions: false,
         icon: <FlaskConical className="w-4 h-4" />, options: { ...opts },
@@ -619,8 +648,8 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setCleaningActions(actions);
 
     let intro = `🎯 Fichier analysé avec succès !\n\n`;
-    if (detected.length > 0) {
-      intro += `⚠️ Colonnes mixtes détectées (numérique + texte) : **${detected.join(', ')}**\n`;
+    if (mixedCols.length > 0) {
+      intro += `⚠️ Colonnes mixtes détectées (numérique + texte) : **${mixedCols.join(', ')}**\n`;
       intro += `→ Une action dédiée a été ajoutée.\n\n`;
     }
     intro += `${actions.length} types de corrections disponibles.\nCliquez sur ⚙️ pour configurer chaque action, puis appliquez.`;
@@ -630,33 +659,24 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     ]);
   };
 
-  const toggleAction = (id: string) => {
-    setCleaningActions(prev => prev.map(a => a.id === id ? { ...a, selected: !a.selected } : a));
-  };
-
-  const toggleOptions = (id: string) => {
-    setCleaningActions(prev => prev.map(a => a.id === id ? { ...a, showOptions: !a.showOptions } : a));
-  };
-
-  const updateOptions = (id: string, patch: Partial<ActionOptions>) => {
+  const toggleAction  = (id: string) => setCleaningActions(prev => prev.map(a => a.id === id ? { ...a, selected: !a.selected } : a));
+  const toggleOptions = (id: string) => setCleaningActions(prev => prev.map(a => a.id === id ? { ...a, showOptions: !a.showOptions } : a));
+  const updateOptions = (id: string, patch: Partial<ActionOptions>) =>
     setCleaningActions(prev => prev.map(a => a.id === id ? { ...a, options: { ...a.options, ...patch } } : a));
-  };
 
   const executeActions = async () => {
     const selected = cleaningActions.filter(a => a.selected);
     if (selected.length === 0) { addMessage('bot', '⚠️ Aucune action sélectionnée.'); return; }
 
-    // Build merged options payload
     const mergedOpts: ActionOptions = selected.reduce((acc, a) => ({ ...acc, ...a.options }), {} as ActionOptions);
     const actionIds = selected.map(a => a.id);
+    const combinedTitle = selected.map(a => a.title).join(' · ');
 
     addMessage('user', `✅ Actions : ${selected.map(a => a.title).join(', ')}`);
     addMessage('bot', '🔧 Nettoyage en cours...', 'loading');
 
-    // Record in history
-    const histEntries = selected.map(a =>
-      addHistoryEntry(a.id, a.title, a.options, 'pending')
-    );
+    // Entrée optimiste locale
+    const localId = addLocalHistoryEntry(combinedTitle, mergedOpts);
 
     try {
       const res = await authFetch(`${API_URL}/api/clean`, {
@@ -665,24 +685,31 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
           session_id: sessionId,
           actions: actionIds,
           options: mergedOpts,
-          // backward compat
           outlier_method: mergedOpts.outlierMethod || 'median',
         })
       });
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
+
       if (res.ok) {
-        histEntries.forEach(id => updateHistoryEntry(id, 'success',
-          `${data.results?.initial_rows || '?'} → ${data.results?.final_rows || '?'} lignes`));
+        const rowResult = `${data.results?.initial_rows || '?'} → ${data.results?.final_rows || '?'} lignes`;
+        updateLocalHistoryEntry(localId, 'success', rowResult);
+
+        // ✅ Remplacer l'historique local par celui du backend (source de vérité)
+        if (data.history_entry) {
+          const backendEntry = backendEntryToHistoryEntry(data.history_entry);
+          setOperationHistory(prev => [backendEntry, ...prev.filter(e => e.id !== localId)]);
+        }
+
         displayResults(data.results, data.download_filename);
         loadSessions();
       } else {
-        histEntries.forEach(id => updateHistoryEntry(id, 'error', data.error));
+        updateLocalHistoryEntry(localId, 'error', data.error);
         addMessage('bot', `❌ Erreur : ${data.error || 'Nettoyage impossible'}`);
       }
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.type !== 'loading'));
-      histEntries.forEach(id => updateHistoryEntry(id, 'error', err.message));
+      updateLocalHistoryEntry(localId, 'error', err.message);
       addMessage('bot', `❌ Erreur : ${err.message}`);
     }
   };
@@ -694,9 +721,10 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     summary += `📊 Avant : ${results.initial_rows} lignes → Après : ${results.final_rows} lignes\n`;
     summary += `Différence : -${results.initial_rows - results.final_rows} lignes\n\n✅ Effectué :\n`;
     if (results.duplicates_removed) summary += `• ${results.duplicates_removed.exact_duplicates_removed || 0} doublons exacts + ${results.duplicates_removed.structural_duplicates_removed || 0} structurels\n`;
-    if (results.missing_corrected) summary += `• ${results.missing_corrected} valeurs manquantes corrigées\n`;
-    if (results.outliers_info) summary += `• ${results.outliers_info.total_outliers || 0} outliers (${results.outliers_info.method_used})\n`;
-    if (results.text_normalized) summary += `• ${results.text_normalized} textes normalisés\n`;
+    if (results.missing_corrected)  summary += `• ${results.missing_corrected} valeurs manquantes corrigées\n`;
+    if (results.mixed_columns_corrected) summary += `• ${results.mixed_columns_corrected} valeurs mixtes corrigées\n`;
+    if (results.outliers_info)      summary += `• ${results.outliers_info.total_outliers || 0} outliers (${results.outliers_info.method_used})\n`;
+    if (results.text_normalized)    summary += `• ${results.text_normalized} textes normalisés\n`;
     summary += `\n💾 Données nettoyées prêtes au téléchargement !`;
     addMessage('bot', summary, 'results');
     addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sessionId}`, filename: downloadFilename }, 'download');
@@ -717,8 +745,14 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       if (res.ok) {
         setSessionId(data.session_id);
         setAnalysisData(data.analysis);
+        setOperationHistory([]);
+
+        // ✅ Colonnes mixtes depuis le backend
+        const backendMixed: string[] = data.analysis?.mixed_columns || [];
+        setMixedColumns(backendMixed);
+
         setStep('actions');
-        proposeActions(data.analysis);
+        proposeActions(data.analysis, backendMixed);
         loadSessions();
       } else {
         addMessage('bot', `❌ Erreur : ${data.error || 'Analyse non disponible'}`);
@@ -738,6 +772,8 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       const res = await authFetch(endpoint);
       if (!res.ok) { const e = await res.json(); addMessage('bot', `❌ ${e.error}`); return; }
       const data = await res.json();
+      // ✅ Récupérer mixed_columns depuis le backend si présent dans la réponse preview
+      if (data.mixed_columns) setMixedColumns(data.mixed_columns);
       setPreviewData(data); setPreviewType(type); setShowPreview(true);
     } catch (err: any) { addMessage('bot', `❌ ${err.message}`); }
   };
@@ -745,15 +781,15 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const startNewSession = () => {
     setMessages([]); setCurrentFile(null); setAnalysisData(null);
     setCleaningActions([]); setSessionId(null); setStep('upload');
-    setShowPreview(false); setIsRestoring(false); setMixedColumns([]);
-    setOperationHistory([]);
+    setShowPreview(false); setIsRestoring(false);
+    setMixedColumns([]); setOperationHistory([]);
     addMessage('bot', `👋 Nouvelle session démarrée. Téléchargez votre fichier.`);
   };
 
   const reanalyze = () => {
     setStep('actions');
     setMessages(prev => prev.filter(m => m.type !== 'results' && m.type !== 'download'));
-    proposeActions(analysisData);
+    proposeActions(analysisData, mixedColumns);
     addMessage('bot', '🔄 Modifiez les actions et relancez le nettoyage.');
   };
 
@@ -799,29 +835,28 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
 
   const getRiskBadge = (risk: string) =>
     risk === 'faible' ? 'bg-green-100 text-green-700' :
-    risk === 'moyen' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700';
+    risk === 'moyen'  ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700';
 
   const getStatusBadge = (status: string) =>
-    status === 'cleaned' ? { color: 'bg-green-100 text-green-700', text: 'Nettoyé' } :
-    status === 'uploaded' ? { color: 'bg-blue-100 text-blue-700', text: 'Analysé' } :
+    status === 'cleaned'  ? { color: 'bg-green-100 text-green-700', text: 'Nettoyé' } :
+    status === 'uploaded' ? { color: 'bg-blue-100 text-blue-700',   text: 'Analysé' } :
     { color: 'bg-gray-100 text-gray-700', text: 'En cours' };
 
-  // ─── Render sub-options for an action ──────────────────────────────────────
   const renderSubOptions = (action: CleaningAction) => {
     if (!action.showOptions) return null;
     const update = (patch: Partial<ActionOptions>) => updateOptions(action.id, patch);
     switch (action.id) {
-      case 'missing_values': return <MissingValuesOptions opts={action.options} onChange={update} />;
-      case 'mixed_columns': return <MixedColumnsOptions opts={action.options} onChange={update} mixedCols={mixedColumns} />;
-      case 'outliers': return <OutliersOptions opts={action.options} onChange={update} />;
-      case 'text_cleaning': return <TextCleaningOptions opts={action.options} onChange={update} />;
-      case 'date_format': return <DateOptions opts={action.options} onChange={update} />;
-      case 'case_normalization': return <CaseOptions opts={action.options} onChange={update} />;
+      case 'missing_values':    return <MissingValuesOptions opts={action.options} onChange={update} />;
+      case 'mixed_columns':     return <MixedColumnsOptions opts={action.options} onChange={update} mixedCols={mixedColumns} />;
+      case 'outliers':          return <OutliersOptions opts={action.options} onChange={update} />;
+      case 'text_cleaning':     return <TextCleaningOptions opts={action.options} onChange={update} />;
+      case 'date_format':       return <DateOptions opts={action.options} onChange={update} />;
+      case 'case_normalization':return <CaseOptions opts={action.options} onChange={update} />;
       default: return null;
     }
   };
 
-  // ─── Cell issues (preview) ─────────────────────────────────────────────────
+  // ── Cell issues (preview) — basée sur analysisData et mixedColumns backend ─
   const getCellIssues = (value: any, colName: string) => {
     if (!analysisData) return [];
     const issues: any[] = [];
@@ -831,21 +866,22 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       issues.push({ label: 'Valeur aberrante', description: 'Statistiquement anormale (IQR)', color: 'bg-red-100 border-red-400' });
     if (analysisData.text_issues?.[colName] && typeof value === 'string') {
       const ti = analysisData.text_issues[colName];
-      if (ti.emojis > 0 && /\p{Emoji}/u.test(value)) issues.push({ label: 'Emoji', description: 'Contient des emojis', color: 'bg-blue-100 border-blue-400' });
-      if (ti.specialChars > 0 && /[^\w\s\-.,;:!?']/.test(value)) issues.push({ label: 'Caract. spéciaux', description: 'Caractères inhabituels', color: 'bg-purple-100 border-purple-400' });
-      if (ti.spaces > 0 && /\s{2,}/.test(value)) issues.push({ label: 'Espaces multiples', description: 'Espaces en trop', color: 'bg-indigo-100 border-indigo-400' });
+      if (ti.emojis > 0 && /\p{Emoji}/u.test(value))
+        issues.push({ label: 'Emoji', description: 'Contient des emojis', color: 'bg-blue-100 border-blue-400' });
+      if (ti.specialChars > 0 && /[^\w\s\-.,;:!?']/.test(value))
+        issues.push({ label: 'Caract. spéciaux', description: 'Caractères inhabituels', color: 'bg-purple-100 border-purple-400' });
+      if (ti.spaces > 0 && /\s{2,}/.test(value))
+        issues.push({ label: 'Espaces multiples', description: 'Espaces en trop', color: 'bg-indigo-100 border-indigo-400' });
     }
     if (analysisData.date_formats?.[colName]?.length > 1)
       issues.push({ label: 'Format date mixte', description: `${analysisData.date_formats[colName].length} formats différents`, color: 'bg-orange-100 border-orange-400' });
-    // mixed column detection
-    if (mixedColumns.includes(colName) && typeof value === 'string' && value !== '' && isNaN(Number(value)))
+    // ✅ Colonne mixte : définie par le backend, pas par heuristique frontend
+    if (mixedColumns.includes(colName) && value !== null && value !== undefined && value !== '' && isNaN(Number(value)))
       issues.push({ label: 'Valeur texte inattendue', description: 'Colonne attendue numérique', color: 'bg-pink-100 border-pink-400' });
     return issues;
   };
 
-  // ─────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────
+  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <div className="flex h-screen bg-gray-50">
 
@@ -856,10 +892,8 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
             className="w-full bg-gray-900 text-white rounded-lg px-4 py-3 hover:bg-gray-800 transition-colors font-medium">
             + Nouveau nettoyage
           </button>
-          <button
-            onClick={() => setShowHistory(true)}
-            className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-600 rounded-lg px-4 py-2.5 hover:bg-gray-50 transition-colors text-sm font-medium"
-          >
+          <button onClick={openHistory}
+            className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-600 rounded-lg px-4 py-2.5 hover:bg-gray-50 transition-colors text-sm font-medium">
             <History className="w-4 h-4" />
             Historique des opérations
             {operationHistory.length > 0 && (
@@ -901,6 +935,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
             </div>
           )}
         </div>
+
         <div className="flex-1 overflow-y-auto p-3">
           <div className="flex items-center justify-between px-3 py-2">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Sessions récentes</div>
@@ -911,7 +946,8 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
             const badge = getStatusBadge(s.status);
             const isSelected = selectedSessions.includes(s.session_id);
             return (
-              <div key={s.session_id} className={`p-3 rounded-lg mb-2 border transition-all ${sessionId === s.session_id ? 'border-gray-900 bg-gray-50' : 'border-gray-100'} ${isSelected ? 'ring-2 ring-green-500' : ''}`}>
+              <div key={s.session_id}
+                className={`p-3 rounded-lg mb-2 border transition-all ${sessionId === s.session_id ? 'border-gray-900 bg-gray-50' : 'border-gray-100'} ${isSelected ? 'ring-2 ring-green-500' : ''}`}>
                 <div className="flex items-start gap-2">
                   {s.status === 'cleaned' && (
                     <input type="checkbox" checked={isSelected}
@@ -928,6 +964,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                       {new Date(s.timestamp).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </div>
                     <div className="text-xs text-gray-400 mt-1">{s.rows} lignes × {s.columns} colonnes</div>
+                    {(s.operation_count || 0) > 0 && (
+                      <div className="text-xs text-blue-500 mt-1 flex items-center gap-1">
+                        <History className="w-3 h-3" />{s.operation_count} opération(s)
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -948,15 +989,18 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
           <div className="flex items-center gap-2">
             {sessionId && (
               <>
-                <button onClick={() => viewData('before')} className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm">
+                <button onClick={() => viewData('before')}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm">
                   <Eye className="w-4 h-4" />Original
                 </button>
                 {step === 'results' && (
                   <>
-                    <button onClick={() => viewData('after')} className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm">
+                    <button onClick={() => viewData('after')}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm">
                       <Eye className="w-4 h-4" />Nettoyé
                     </button>
-                    <button onClick={reanalyze} className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm">
+                    <button onClick={reanalyze}
+                      className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm">
                       <RefreshCw className="w-4 h-4" />Modifier
                     </button>
                   </>
@@ -1006,11 +1050,10 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                       <div className="whitespace-pre-line text-gray-800 mb-4">{msg.content}</div>
                       <div className="space-y-3 mt-4">
                         {cleaningActions.map(action => (
-                          <div key={action.id} className={`border-2 rounded-xl transition-all ${action.selected ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}>
-                            {/* Action header row */}
+                          <div key={action.id}
+                            className={`border-2 rounded-xl transition-all ${action.selected ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}`}>
                             <div className="flex items-start gap-3 p-4">
-                              <div
-                                onClick={() => toggleAction(action.id)}
+                              <div onClick={() => toggleAction(action.id)}
                                 className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center transition-all flex-shrink-0 cursor-pointer ${action.selected ? 'bg-gray-900 border-gray-900' : 'border-gray-300'}`}>
                                 {action.selected && <CheckCircle className="w-3 h-3 text-white" />}
                               </div>
@@ -1030,22 +1073,16 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                                 <p className="text-sm text-gray-600 mt-1">{action.description}</p>
                                 <p className="text-xs text-gray-400 mt-1"><strong>Impact :</strong> {action.impact}</p>
                               </div>
-                              {/* Config toggle (only for configurable actions) */}
                               {action.id !== 'duplicates' && (
-                                <button
-                                  onClick={() => toggleOptions(action.id)}
-                                  className={`flex-shrink-0 flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-all ${action.showOptions ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-500 hover:border-gray-400'}`}
-                                >
+                                <button onClick={() => toggleOptions(action.id)}
+                                  className={`flex-shrink-0 flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-all ${action.showOptions ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-300 text-gray-500 hover:border-gray-400'}`}>
                                   <Settings2 className="w-3.5 h-3.5" />
                                   {action.showOptions ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                                 </button>
                               )}
                             </div>
-                            {/* Sub-options accordion */}
-                            {renderSubOptions(action) && (
-                              <div className="px-4 pb-4">
-                                {renderSubOptions(action)}
-                              </div>
+                            {action.showOptions && (
+                              <div className="px-4 pb-4">{renderSubOptions(action)}</div>
                             )}
                           </div>
                         ))}
@@ -1123,15 +1160,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                 </button>
               </div>
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={userQuestion}
-                  onChange={e => setUserQuestion(e.target.value)}
+                <input type="text" value={userQuestion} onChange={e => setUserQuestion(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && !isAsking && askQuestion()}
                   placeholder="Posez une question sur vos données..."
                   className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  disabled={isAsking}
-                />
+                  disabled={isAsking} />
                 <button onClick={askQuestion} disabled={isAsking || !userQuestion.trim()}
                   className="bg-gray-900 text-white px-6 py-3 rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50">
                   {isAsking ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" /> : 'Envoyer'}
@@ -1163,7 +1196,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
 
       {/* HISTORY PANEL */}
       {showHistory && (
-        <HistoryPanel history={operationHistory} onClose={() => setShowHistory(false)} />
+        <HistoryPanel history={operationHistory} isLoading={isHistoryLoading} onClose={() => setShowHistory(false)} />
       )}
 
       {/* PREVIEW MODAL */}
@@ -1194,7 +1227,9 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                   <tr>
                     <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 bg-gray-100 sticky left-0 z-20">#</th>
                     {previewData.columns.map((col: string, i: number) => (
-                      <th key={i} className={`border border-gray-300 px-3 py-2 text-left text-xs font-semibold whitespace-nowrap ${mixedColumns.includes(col) && previewType === 'before' ? 'text-pink-700 bg-pink-50' : 'text-gray-700'}`}>
+                      <th key={i} className={`border border-gray-300 px-3 py-2 text-left text-xs font-semibold whitespace-nowrap ${
+                        mixedColumns.includes(col) && previewType === 'before' ? 'text-pink-700 bg-pink-50' : 'text-gray-700'
+                      }`}>
                         {col}{mixedColumns.includes(col) && previewType === 'before' ? ' ⚠️' : ''}
                       </th>
                     ))}
@@ -1250,11 +1285,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
               <div className="flex flex-wrap gap-3 text-xs">
                 {[
                   ['bg-yellow-100 border-yellow-400', 'Valeur manquante'],
-                  ['bg-red-100 border-red-400', 'Valeur aberrante'],
-                  ['bg-blue-100 border-blue-400', 'Emoji'],
-                  ['bg-purple-100 border-purple-400', 'Caract. spéciaux'],
-                  ['bg-orange-100 border-orange-400', 'Format date mixte'],
-                  ['bg-pink-100 border-pink-400', 'Texte dans col. numérique'],
+                  ['bg-red-100 border-red-400',       'Valeur aberrante'],
+                  ['bg-blue-100 border-blue-400',      'Emoji'],
+                  ['bg-purple-100 border-purple-400',  'Caract. spéciaux'],
+                  ['bg-orange-100 border-orange-400',  'Format date mixte'],
+                  ['bg-pink-100 border-pink-400',      'Texte dans col. numérique'],
                 ].map(([cls, label]) => (
                   <div key={label} className="flex items-center gap-1">
                     <div className={`w-4 h-4 border-2 rounded ${cls}`} />
