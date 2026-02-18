@@ -872,10 +872,6 @@ def health_check():
     return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
 
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'ok'}), 200
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
