@@ -1,4 +1,4 @@
-# app.py - Backend Flask complet avec nouvelles stratégies de nettoyage
+# app.py - Backend Flask complet avec corrections
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -155,6 +155,33 @@ def save_file(df, filepath, file_extension):
         raise Exception(f"Erreur lors de la sauvegarde: {str(e)}")
 
 
+# -------------------- DÉTECTION COLONNES MIXTES --------------------
+
+def _is_truly_mixed_column(series: pd.Series) -> bool:
+    """
+    Retourne True UNIQUEMENT si la colonne contient À LA FOIS :
+      - au moins une valeur numérique valide
+      - au moins une valeur texte non-numérique non-nulle
+
+    Exemples :
+      [3, 1, 'HURLEY', 2]       → True   (mixte réelle)
+      ['PUTNAM', 'BERKELEY']    → False  (texte pur → NE PAS TOUCHER)
+      [1.5, 2.0, np.nan]        → False  (numérique avec manquants seulement)
+      ['--', 'na', 1, 2]        → True   (pseudo-nulls texte + numériques)
+      [np.nan, np.nan]          → False  (tout null)
+    """
+    non_null = series.dropna()
+    if len(non_null) == 0:
+        return False
+
+    numeric_converted = pd.to_numeric(non_null, errors='coerce')
+    n_numeric = int(numeric_converted.notna().sum())   # valeurs vraiment numériques
+    n_text = int(numeric_converted.isna().sum())       # valeurs non convertibles = texte
+
+    # Les DEUX catégories doivent être présentes pour qualifier de "mixte"
+    return n_numeric > 0 and n_text > 0
+
+
 # -------------------- ANALYSE DES DONNÉES --------------------
 
 class DataAnalyzer:
@@ -189,27 +216,10 @@ class DataAnalyzer:
     @staticmethod
     def detect_mixed_columns(df):
         """
-        Détecte les colonnes de type 'text' qui contiennent en réalité
-        un mélange de valeurs numériques et de chaînes non-numériques.
-        Retourne la liste des noms de colonnes mixtes.
+        Retourne uniquement les colonnes avec un vrai mélange num/texte.
+        Colonnes purement textuelles (ST_NAME, OWN_OCCUPIED…) sont ignorées.
         """
-        mixed = []
-        for col in df.columns:
-            if pd.api.types.is_numeric_dtype(df[col]):
-                continue
-            col_data = df[col].dropna()
-            if len(col_data) == 0:
-                continue
-            numeric_attempt = pd.to_numeric(col_data, errors='coerce')
-            original_nulls = col_data.isna()
-            new_nulls = numeric_attempt.isna()
-            mixed_mask = new_nulls & ~original_nulls
-            # Colonne mixte si au moins une valeur est numérique ET au moins une est non-numérique
-            n_numeric = (~new_nulls).sum()
-            n_mixed = mixed_mask.sum()
-            if n_numeric > 0 and n_mixed > 0:
-                mixed.append(col)
-        return mixed
+        return [col for col in df.columns if _is_truly_mixed_column(df[col])]
 
     @staticmethod
     def analyze_missing_values(df):
@@ -249,9 +259,9 @@ class DataAnalyzer:
                 IQR = Q3 - Q1
                 lower = Q1 - 1.5 * IQR
                 upper = Q3 + 1.5 * IQR
-                count = ((numeric_col < lower) | (numeric_col > upper)).sum()
+                count = int(((numeric_col < lower) | (numeric_col > upper)).sum())
                 if count > 0:
-                    outliers[col] = int(count)
+                    outliers[col] = count
         return outliers
 
     @staticmethod
@@ -268,19 +278,19 @@ class DataAnalyzer:
         for col in df.columns:
             if column_types.get(col) in ['text', 'date_string']:
                 col_issues = {}
-                emojis = df[col].apply(lambda x: bool(emoji_pattern.search(str(x)))).sum()
+                emojis = int(df[col].apply(lambda x: bool(emoji_pattern.search(str(x)))).sum())
                 if emojis > 0:
-                    col_issues['emojis'] = int(emojis)
-                extra_spaces = df[col].apply(
+                    col_issues['emojis'] = emojis
+                extra_spaces = int(df[col].apply(
                     lambda x: '  ' in str(x) or str(x) != str(x).strip()
-                ).sum()
+                ).sum())
                 if extra_spaces > 0:
-                    col_issues['spaces'] = int(extra_spaces)
-                special_chars = df[col].apply(
+                    col_issues['spaces'] = extra_spaces
+                special_chars = int(df[col].apply(
                     lambda x: bool(re.search(r'[^a-zA-Z0-9\s\-_.,@]', str(x)))
-                ).sum()
+                ).sum())
                 if special_chars > 0:
-                    col_issues['specialChars'] = int(special_chars)
+                    col_issues['specialChars'] = special_chars
                 if df[col].nunique() < len(df) * 0.5:
                     values_lower = df[col].apply(lambda x: str(x).lower())
                     inconsistent = len(df[col].unique()) - len(values_lower.unique())
@@ -320,7 +330,7 @@ class DataAnalyzer:
             'columns': int(len(df.columns)),
             'column_names': list(df.columns),
             'column_types': column_types,
-            'mixed_columns': mixed_columns,          # ← NOUVEAU
+            'mixed_columns': mixed_columns,
             'missing_values': DataAnalyzer.analyze_missing_values(df),
             'duplicates': DataAnalyzer.detect_duplicates(df),
             'outliers': DataAnalyzer.detect_outliers(df, column_types),
@@ -356,7 +366,7 @@ class DataCleaner:
             "final_rows": len(df)
         }
 
-    # ── 2. Valeurs manquantes avec stratégies séparées numérique / texte ─────
+    # ── 2. Valeurs manquantes ─────────────────────────────────────────────────
     @staticmethod
     def handle_missing_values(df, column_types,
                                numeric_strategy: str = 'median',
@@ -364,6 +374,8 @@ class DataCleaner:
         """
         numeric_strategy : 'mean' | 'median' | 'mode' | 'zero' | 'drop'
         text_strategy    : 'mode' | 'empty' | 'drop'
+
+        NOTE : les colonnes mixtes sont ignorées ici (gérées par handle_mixed_columns).
         """
         corrected = 0
         rows_to_drop = set()
@@ -374,7 +386,13 @@ class DataCleaner:
             if count == 0:
                 continue
 
-            if column_types.get(col) == 'numeric':
+            # ✅ Ignorer les colonnes mixtes — elles ont leur propre traitement
+            if _is_truly_mixed_column(df[col]):
+                continue
+
+            col_type = column_types.get(col)
+
+            if col_type == 'numeric':
                 if numeric_strategy == 'mean':
                     df[col] = df[col].fillna(df[col].mean())
                     corrected += count
@@ -392,7 +410,7 @@ class DataCleaner:
                 elif numeric_strategy == 'drop':
                     rows_to_drop.update(df[missing_mask].index.tolist())
 
-            elif column_types.get(col) in ('text', 'date_string'):
+            elif col_type in ('text', 'date_string'):
                 if text_strategy == 'mode':
                     mode_val = df[col].mode()
                     if len(mode_val):
@@ -409,29 +427,45 @@ class DataCleaner:
 
         return df, int(corrected)
 
-    # ── 3. Colonnes mixtes (numérique + texte) ────────────────────────────────
+    # ── 3. Colonnes mixtes ────────────────────────────────────────────────────
     @staticmethod
     def handle_mixed_columns(df, mixed_strategy: str = 'replace_median'):
         """
-        Détecte et traite les colonnes contenant un mélange numérique/texte.
+        Traite UNIQUEMENT les colonnes qui contiennent à la fois des valeurs
+        numériques valides ET du texte non-numérique non-null.
+
+        Les colonnes purement textuelles (ST_NAME = 'PUTNAM', 'BERKELEY'…)
+        ne contiennent AUCUNE valeur numérique → _is_truly_mixed_column()
+        retourne False → elles sont ignorées et leurs données préservées.
 
         mixed_strategy :
-          'to_numeric'     → convertit en numérique (texte → NaN, traité ensuite)
-          'replace_median' → remplace les valeurs texte par la médiane (RECOMMANDÉ)
+          'to_numeric'     → convertit en numérique (texte → NaN pour suite)
+          'replace_median' → remplace les valeurs texte par la médiane
           'replace_mean'   → remplace les valeurs texte par la moyenne
           'drop_rows'      → supprime les lignes avec valeur texte inattendue
         """
         corrections = 0
 
         for col in df.columns:
-            numeric_attempt = pd.to_numeric(df[col], errors='coerce')
+            # ✅ GARDE-FOU CRITIQUE : ne traiter que les vraies colonnes mixtes
+            if not _is_truly_mixed_column(df[col]):
+                continue
+
             original_nulls = df[col].isna()
+            numeric_attempt = pd.to_numeric(df[col], errors='coerce')
             new_nulls = numeric_attempt.isna()
-            # mixed_mask = lignes qui étaient non-nulles mais ne sont pas numériques
+
+            # Lignes non-nulles qui n'ont pas pu être converties en numérique
             mixed_mask = new_nulls & ~original_nulls
 
             if mixed_mask.sum() == 0:
-                continue  # Colonne homogène, rien à faire
+                continue
+
+            logging.debug(
+                f"[MIXED] col={col}, strategy={mixed_strategy}, "
+                f"n_mixed={int(mixed_mask.sum())}, "
+                f"n_numeric={int((~new_nulls).sum())}"
+            )
 
             if mixed_strategy == 'to_numeric':
                 df[col] = numeric_attempt
@@ -458,9 +492,7 @@ class DataCleaner:
     # ── 4. Outliers ───────────────────────────────────────────────────────────
     @staticmethod
     def remove_outliers(df, column_types, method: str = 'median'):
-        """
-        method : 'median' | 'mean' | 'cap' | 'nan' | 'remove' | 'flag'
-        """
+        """method : 'median' | 'mean' | 'cap' | 'nan' | 'remove' | 'flag'"""
         initial = len(df)
         outliers_info = {}
 
@@ -474,11 +506,11 @@ class DataCleaner:
             lower = Q1 - 1.5 * IQR
             upper = Q3 + 1.5 * IQR
             mask = (numeric_col < lower) | (numeric_col > upper)
-            count = mask.sum()
+            count = int(mask.sum())
             if count == 0:
                 continue
 
-            outliers_info[col] = int(count)
+            outliers_info[col] = count
 
             if method == 'remove':
                 df = df[~mask]
@@ -500,7 +532,7 @@ class DataCleaner:
             'total_outliers': sum(outliers_info.values()) if outliers_info else 0
         }
 
-    # ── 5. Nettoyage texte avec options granulaires ───────────────────────────
+    # ── 5. Nettoyage texte ────────────────────────────────────────────────────
     @staticmethod
     def clean_text(df, column_types,
                    remove_emojis: bool = True,
@@ -535,7 +567,7 @@ class DataCleaner:
 
         return df, int(corrections)
 
-    # ── 6. Harmonisation dates avec format cible ──────────────────────────────
+    # ── 6. Harmonisation dates ────────────────────────────────────────────────
     @staticmethod
     def harmonize_dates(df, column_types, target_format: str = 'YYYY-MM-DD'):
         fmt_map = {
@@ -553,12 +585,10 @@ class DataCleaner:
                 )
         return df
 
-    # ── 7. Normalisation casse avec style ─────────────────────────────────────
+    # ── 7. Normalisation casse ────────────────────────────────────────────────
     @staticmethod
     def normalize_case(df, column_types, case_style: str = 'title'):
-        """
-        case_style : 'title' | 'lower' | 'upper'
-        """
+        """case_style : 'title' | 'lower' | 'upper'"""
         corrections = 0
         for col in df.columns:
             if column_types.get(col) != 'text':
@@ -574,37 +604,33 @@ class DataCleaner:
             corrections += int((before != after).sum())
         return df, int(corrections)
 
-    # ── 8. Orchestrateur principal ─────────────────────────────────────────────
+    # ── 8. Orchestrateur ──────────────────────────────────────────────────────
     @staticmethod
     def apply_cleaning(df, actions, column_types, outlier_method='median', options=None):
         """
-        Applique les actions de nettoyage dans l'ordre optimal.
+        Ordre : doublons → mixtes → manquants → outliers → texte → dates → casse
 
-        options (dict) — toutes les clés sont optionnelles :
-          numericStrategy   : 'mean'|'median'|'mode'|'zero'|'drop'  (défaut: 'median')
-          textStrategy      : 'mode'|'empty'|'drop'                  (défaut: 'mode')
-          mixedStrategy     : 'to_numeric'|'replace_median'|
-                              'replace_mean'|'drop_rows'             (défaut: 'replace_median')
-          outlierMethod     : 'median'|'mean'|'cap'|'nan'|
-                              'remove'|'flag'                        (défaut: outlier_method param)
-          removeEmojis      : bool  (défaut: True)
-          removeSpecialChars: bool  (défaut: True)
-          trimSpaces        : bool  (défaut: True)
-          deduplicateSpaces : bool  (défaut: True)
-          targetFormat      : 'YYYY-MM-DD'|'DD/MM/YYYY'|'MM/DD/YYYY' (défaut: 'YYYY-MM-DD')
-          caseStyle         : 'title'|'lower'|'upper'               (défaut: 'title')
+        options (dict, clés optionnelles) :
+          numericStrategy    'mean'|'median'|'mode'|'zero'|'drop'
+          textStrategy       'mode'|'empty'|'drop'
+          mixedStrategy      'to_numeric'|'replace_median'|'replace_mean'|'drop_rows'
+          outlierMethod      'median'|'mean'|'cap'|'nan'|'remove'|'flag'
+          removeEmojis       bool
+          removeSpecialChars bool
+          trimSpaces         bool
+          deduplicateSpaces  bool
+          targetFormat       'YYYY-MM-DD'|'DD/MM/YYYY'|'MM/DD/YYYY'
+          caseStyle          'title'|'lower'|'upper'
         """
         if options is None:
             options = {}
 
-        # outlierMethod dans options prend le dessus sur le paramètre outlier_method
         resolved_outlier_method = options.get(
             'outlierMethod', options.get('outlier_method', outlier_method)
         )
 
         results = {'initial_rows': int(len(df)), 'actions_performed': []}
 
-        # Ordre recommandé : doublons → mixtes → manquants → outliers → texte → dates → casse
         if 'duplicates' in actions:
             df, removed = DataCleaner.remove_duplicates(df)
             results['duplicates_removed'] = removed
@@ -694,7 +720,8 @@ def upload_file(current_user_id):
             'dataframe': df,
             'analysis': analysis,
             'timestamp': datetime.now().isoformat(),
-            'user_id': current_user_id
+            'user_id': current_user_id,
+            'operation_history': []      # ← Historique persistant par session
         }
 
         return jsonify({
@@ -720,7 +747,8 @@ def get_sessions(current_user_id):
                 'timestamp': session['timestamp'],
                 'rows': session['analysis']['rows'],
                 'columns': session['analysis']['columns'],
-                'status': session.get('status', 'uploaded')
+                'status': session.get('status', 'uploaded'),
+                'operation_count': len(session.get('operation_history', []))
             })
     sessions_list.sort(key=lambda x: x['timestamp'], reverse=True)
     return jsonify({'sessions': sessions_list}), 200
@@ -744,7 +772,8 @@ def get_session_details(current_user_id, session_id):
             'file_extension': session['file_extension'],
             'timestamp': session['timestamp'],
             'analysis': session['analysis'],
-            'status': session.get('status', 'uploaded')
+            'status': session.get('status', 'uploaded'),
+            'operation_history': session.get('operation_history', [])
         }
         if 'cleaning_results' in session and 'cleaned_filepath' in session:
             response_data['cleaning_results'] = {
@@ -761,15 +790,43 @@ def get_session_details(current_user_id, session_id):
         return jsonify({'error': str(e)}), 500
 
 
+# ── Route dédiée : historique d'une session ───────────────────────────────────
+@app.route('/api/session/<session_id>/history', methods=['GET'])
+@token_required
+def get_session_history(current_user_id, session_id):
+    try:
+        if session_id not in sessions_db:
+            return jsonify({'error': 'Session non trouvée'}), 404
+
+        session = sessions_db[session_id]
+
+        if session.get('user_id') != current_user_id:
+            return jsonify({'error': 'Accès non autorisé'}), 403
+
+        return jsonify({
+            'session_id': session_id,
+            'filename': session['filename'],
+            'timestamp': session['timestamp'],
+            'status': session.get('status', 'uploaded'),
+            'history': session.get('operation_history', [])
+        }), 200
+
+    except Exception as e:
+        logging.error(f"[GET HISTORY ERROR] {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/clean', methods=['POST'])
 @token_required
 def clean_data(current_user_id):
+    request_data = None
+    session = None
     try:
-        data = request.json
-        session_id = data.get('session_id')
-        actions = data.get('actions', [])
-        outlier_method = data.get('outlier_method', 'median')
-        options = data.get('options', {})    # ← Nouvelles options granulaires
+        request_data = request.json
+        session_id = request_data.get('session_id')
+        actions = request_data.get('actions', [])
+        outlier_method = request_data.get('outlier_method', 'median')
+        options = request_data.get('options', {})
 
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
@@ -800,14 +857,55 @@ def clean_data(current_user_id):
         session['cleaning_results'] = results
         session['status'] = 'cleaned'
 
+        # ── Persister l'opération dans l'historique de la session ──────────
+        history_entry = {
+            'id': str(uuid.uuid4()),
+            'timestamp': datetime.now().isoformat(),
+            'actions': actions,
+            'options': options,
+            'results_summary': {
+                'initial_rows': results.get('initial_rows'),
+                'final_rows': results.get('final_rows'),
+                'actions_performed': results.get('actions_performed', []),
+                'duplicates_removed': (
+                    results.get('duplicates_removed', {}).get('total_removed', 0)
+                    if results.get('duplicates_removed') else 0
+                ),
+                'missing_corrected': results.get('missing_corrected', 0),
+                'mixed_columns_corrected': results.get('mixed_columns_corrected', 0),
+                'outliers_info': results.get('outliers_info'),
+                'text_normalized': results.get('text_normalized', 0),
+                'case_normalized': results.get('case_normalized', 0),
+            },
+            'status': 'success'
+        }
+        if 'operation_history' not in session:
+            session['operation_history'] = []
+        session['operation_history'].insert(0, history_entry)
+        # ───────────────────────────────────────────────────────────────────
+
         return jsonify({
             'session_id': session_id,
             'results': results,
-            'download_filename': cleaned_filename
+            'download_filename': cleaned_filename,
+            'history_entry': history_entry
         }), 200
 
     except Exception as e:
         logging.error(f"[CLEAN ERROR] {str(e)}")
+        # Enregistrer l'erreur dans l'historique
+        if session is not None:
+            if 'operation_history' not in session:
+                session['operation_history'] = []
+            session['operation_history'].insert(0, {
+                'id': str(uuid.uuid4()),
+                'timestamp': datetime.now().isoformat(),
+                'actions': request_data.get('actions', []) if request_data else [],
+                'options': request_data.get('options', {}) if request_data else {},
+                'results_summary': {},
+                'status': 'error',
+                'error': str(e)
+            })
         return jsonify({'error': str(e)}), 500
 
 
@@ -851,7 +949,7 @@ def preview_data(current_user_id, session_id):
             'columns': [str(col) for col in df.columns],
             'rows': rows,
             'total_rows': int(len(session['dataframe'])),
-            'mixed_columns': session['analysis'].get('mixed_columns', [])  # ← NOUVEAU
+            'mixed_columns': session['analysis'].get('mixed_columns', [])
         }), 200
 
     except Exception as e:
@@ -1055,13 +1153,35 @@ def generate_report(current_user_id):
         doc.add_paragraph(f"Nombre de lignes : {session['analysis']['rows']:,}")
         doc.add_paragraph(f"Nombre de colonnes : {session['analysis']['columns']}")
 
-        # Colonnes mixtes
         mixed_cols = session['analysis'].get('mixed_columns', [])
         if mixed_cols:
             doc.add_heading('⚠️ Colonnes Mixtes Détectées', level=1)
             doc.add_paragraph(
                 f"{len(mixed_cols)} colonne(s) avec mélange numérique/texte : {', '.join(mixed_cols)}"
             )
+
+        # Historique des opérations dans le rapport
+        history = session.get('operation_history', [])
+        if history:
+            doc.add_heading('📋 Historique des Opérations', level=1)
+            for op in history:
+                ts = op.get('timestamp', '')
+                try:
+                    ts = datetime.fromisoformat(ts).strftime('%d/%m/%Y %H:%M:%S')
+                except Exception:
+                    pass
+                status_label = '✅ Succès' if op.get('status') == 'success' else '❌ Erreur'
+                doc.add_heading(f"Opération du {ts} — {status_label}", level=2)
+                summary = op.get('results_summary', {})
+                if summary:
+                    doc.add_paragraph(
+                        f"Lignes : {summary.get('initial_rows', '?')} → {summary.get('final_rows', '?')}"
+                    )
+                    for action in summary.get('actions_performed', []):
+                        doc.add_paragraph(f"• {action}")
+                if op.get('error'):
+                    doc.add_paragraph(f"Erreur : {op['error']}")
+                doc.add_paragraph("")
 
         dup = session['analysis'].get('duplicates', {})
         missing = session['analysis'].get('missing_values', {})
