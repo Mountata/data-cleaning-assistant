@@ -56,11 +56,12 @@ interface CleaningAction {
   showOptions: boolean;
 }
 
-/** One recorded operation — peut venir du backend ou du state local */
+type DownloadFormat = 'csv' | 'xlsx' | 'json' | 'xml';
+
 interface HistoryEntry {
   id: string;
   timestamp: Date;
-  actionTitle: string;   // label lisible
+  actionTitle: string;
   options: ActionOptions;
   result?: string;
   status: 'success' | 'error' | 'pending';
@@ -107,25 +108,22 @@ const dateFormatLabels: Record<string, string> = {
   'MM/DD/YYYY': '📅 US : 01/31/2024',
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Format de téléchargement ─────────────────────────────────────────────────
+const downloadFormatConfig: Record<DownloadFormat, { icon: string; label: string; description: string; color: string }> = {
+  csv:  { icon: '📄', label: 'CSV',  description: 'Universel',    color: 'emerald' },
+  xlsx: { icon: '📊', label: 'XLSX', description: 'Excel natif',  color: 'green'   },
+  json: { icon: '{ }',label: 'JSON', description: 'API / Web',    color: 'blue'    },
+  xml:  { icon: '🏷️', label: 'XML',  description: 'Structuré',    color: 'purple'  },
+};
 
-/**
- * Transforme une entrée d'historique brute venant du backend en HistoryEntry.
- * Le backend stocke actions[] + options + results_summary.
- */
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const backendEntryToHistoryEntry = (be: any): HistoryEntry => {
   const summary = be.results_summary || {};
   const actions: string[] = be.actions || [];
-
-  // Libellé synthétique à partir des actions effectuées
-  const actionLabel = summary.actions_performed?.join(' · ')
-    || actions.join(', ')
-    || 'Nettoyage';
-
+  const actionLabel = summary.actions_performed?.join(' · ') || actions.join(', ') || 'Nettoyage';
   const result = summary.initial_rows != null
     ? `${summary.initial_rows} → ${summary.final_rows} lignes`
     : undefined;
-
   return {
     id: be.id,
     timestamp: new Date(be.timestamp),
@@ -300,6 +298,154 @@ const CaseOptions: React.FC<{
   </div>
 );
 
+// ─── Format Selector Component ────────────────────────────────────────────────
+const FormatSelector: React.FC<{
+  selected: DownloadFormat;
+  onChange: (f: DownloadFormat) => void;
+}> = ({ selected, onChange }) => {
+  const colorMap: Record<string, string> = {
+    emerald: 'border-emerald-500 bg-emerald-50 text-emerald-800',
+    green:   'border-green-500 bg-green-50 text-green-800',
+    blue:    'border-blue-500 bg-blue-50 text-blue-800',
+    purple:  'border-purple-500 bg-purple-50 text-purple-800',
+  };
+  const inactiveClass = 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50';
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-semibold text-gray-700">📥 Format de téléchargement :</p>
+      <div className="grid grid-cols-4 gap-2">
+        {(Object.entries(downloadFormatConfig) as [DownloadFormat, typeof downloadFormatConfig[DownloadFormat]][]).map(([fmt, cfg]) => {
+          const isSelected = selected === fmt;
+          return (
+            <button
+              key={fmt}
+              onClick={() => onChange(fmt)}
+              className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all text-center ${
+                isSelected ? colorMap[cfg.color] : inactiveClass
+              }`}
+            >
+              <span className="text-xl mb-1">{cfg.icon}</span>
+              <span className="font-bold text-xs tracking-wide">{cfg.label}</span>
+              <span className={`text-xs mt-0.5 ${isSelected ? 'opacity-80' : 'text-gray-400'}`}>
+                {cfg.description}
+              </span>
+              {isSelected && (
+                <span className="mt-1 w-1.5 h-1.5 rounded-full bg-current inline-block" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ─── Download Button with Format ──────────────────────────────────────────────
+const DownloadMessage: React.FC<{
+  content: { downloadUrl: string; filename: string };
+  onMessage: (text: string) => void;
+}> = ({ content, onMessage }) => {
+  const [fmt, setFmt] = useState<DownloadFormat>('csv');
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setIsDownloading(true);
+    try {
+      const url = `${content.downloadUrl}?format=${fmt}`;
+      const res = await authFetch(url);
+      if (!res.ok) {
+        const err = await res.json();
+        onMessage(`❌ Erreur : ${err.error || 'Téléchargement impossible'}`);
+        return;
+      }
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const baseName = content.filename.replace(/^cleaned_/, '').replace(/\.[^.]+$/, '');
+      a.href = objectUrl;
+      a.download = `cleaned_${baseName}.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(objectUrl);
+      document.body.removeChild(a);
+      onMessage(`✅ Fichier téléchargé en ${fmt.toUpperCase()} !`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-3 p-1">
+      <FormatSelector selected={fmt} onChange={setFmt} />
+      <button
+        onClick={handleDownload}
+        disabled={isDownloading}
+        className="w-full bg-gray-900 text-white px-6 py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-gray-800 transition-all font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {isDownloading ? (
+          <>
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+            Préparation du fichier…
+          </>
+        ) : (
+          <>
+            <Download className="w-4 h-4" />
+            Télécharger en {fmt.toUpperCase()}
+          </>
+        )}
+      </button>
+    </div>
+  );
+};
+
+// ─── Multi-download with Format ───────────────────────────────────────────────
+const MultiDownloadBar: React.FC<{
+  selectedSessions: string[];
+  onDownload: (fmt: DownloadFormat) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+  isDownloading: boolean;
+}> = ({ selectedSessions, onDownload, onSelectAll, onClear, isDownloading }) => {
+  const [fmt, setFmt] = useState<DownloadFormat>('csv');
+
+  return (
+    <div className="space-y-2 mt-2">
+      {/* mini format tabs */}
+      <div className="flex gap-1">
+        {(Object.entries(downloadFormatConfig) as [DownloadFormat, any][]).map(([f, cfg]) => (
+          <button key={f} onClick={() => setFmt(f)}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+              fmt === f ? 'bg-gray-900 text-white border-gray-900' : 'border-gray-200 text-gray-500 hover:border-gray-400'
+            }`}>
+            {cfg.label}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => onDownload(fmt)}
+        disabled={isDownloading}
+        className="w-full bg-green-600 text-white rounded-lg px-4 py-2.5 hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
+      >
+        {isDownloading
+          ? <><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />Téléchargement…</>
+          : <><Download className="w-4 h-4" />Télécharger {selectedSessions.length} fichier(s) en {fmt.toUpperCase()}</>
+        }
+      </button>
+      <div className="flex gap-2">
+        <button onClick={onSelectAll}
+          className="flex-1 bg-blue-100 text-blue-700 rounded-lg px-3 py-2 hover:bg-blue-200 text-xs font-medium">
+          Tout sélect.
+        </button>
+        <button onClick={onClear}
+          className="flex-1 bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 text-xs font-medium">
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ─── History Panel ────────────────────────────────────────────────────────────
 const HistoryPanel: React.FC<{
   history: HistoryEntry[];
@@ -428,13 +574,10 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   const [isAsking, setIsAsking]               = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-  // ── Historique : stocké côté backend, chargé à la demande ─────────────────
   const [operationHistory, setOperationHistory] = useState<HistoryEntry[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [showHistory, setShowHistory]           = useState(false);
-
-  // ── Colonnes mixtes : renvoyées par le backend dans analysis.mixed_columns ─
-  const [mixedColumns, setMixedColumns] = useState<string[]>([]);
+  const [mixedColumns, setMixedColumns]         = useState<string[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef   = useRef<HTMLInputElement>(null);
@@ -444,7 +587,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
   useEffect(() => {
     if (messages.length === 0 && !isRestoring) {
       addMessage('bot',
-        `👋 Bonjour ${user?.name || 'Utilisateur'} ! Je suis votre assistant intelligent de qualité de données.\n\nTéléchargez un fichier CSV ou Excel pour commencer l'analyse 📊`,
+        `👋 Bonjour ${user?.name || 'Utilisateur'} ! Je suis votre assistant intelligent de qualité de données.\n\nTéléchargez un fichier CSV, Excel, JSON ou XML pour commencer l'analyse 📊`,
         'text', ['Comment tu fonctionnes ?', 'Quels formats acceptes-tu ?']);
     }
     loadSessions();
@@ -454,34 +597,26 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     setMessages(prev => [...prev, { sender, content, type, timestamp: new Date(), suggestions }]);
   };
 
-  // ── Charger l'historique depuis le backend pour une session ────────────────
   const loadHistory = async (sid: string) => {
     setIsHistoryLoading(true);
     try {
       const res = await authFetch(`${API_URL}/api/session/${sid}/history`);
       if (!res.ok) return;
       const data = await res.json();
-      const entries: HistoryEntry[] = (data.history || []).map(backendEntryToHistoryEntry);
-      setOperationHistory(entries);
+      setOperationHistory((data.history || []).map(backendEntryToHistoryEntry));
     } catch {
-      // silently ignore — history just won't show
+      // ignore
     } finally {
       setIsHistoryLoading(false);
     }
   };
 
-  // ── Ouvrir l'historique et charger depuis le backend si nécessaire ─────────
   const openHistory = async () => {
     setShowHistory(true);
-    if (sessionId) {
-      await loadHistory(sessionId);
-    }
+    if (sessionId) await loadHistory(sessionId);
   };
 
-  // ── Ajouter une entrée optimiste locale (avant retour backend) ─────────────
-  const addLocalHistoryEntry = (
-    actionTitle: string, options: ActionOptions
-  ): string => {
+  const addLocalHistoryEntry = (actionTitle: string, options: ActionOptions): string => {
     const id = crypto.randomUUID();
     setOperationHistory(prev => [{ id, timestamp: new Date(), actionTitle, options, status: 'pending' }, ...prev]);
     return id;
@@ -528,13 +663,9 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       setCurrentFile({ name: s.filename });
       setAnalysisData(full.analysis);
 
-      // ✅ Colonnes mixtes venant du backend (champ analysis.mixed_columns)
       const backendMixed: string[] = full.analysis?.mixed_columns || [];
       setMixedColumns(backendMixed);
-
-      // ✅ Historique persistant venant du backend
-      const histEntries: HistoryEntry[] = (full.operation_history || []).map(backendEntryToHistoryEntry);
-      setOperationHistory(histEntries);
+      setOperationHistory((full.operation_history || []).map(backendEntryToHistoryEntry));
 
       addMessage('bot', `✅ Session restaurée : ${s.filename}`);
       addMessage('bot', `📊 ${full.analysis.rows} lignes × ${full.analysis.columns} colonnes`);
@@ -573,11 +704,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     trimSpaces: true, deduplicateSpaces: true, targetFormat: 'YYYY-MM-DD', caseStyle: 'title',
   });
 
-  /**
-   * Propose les actions de nettoyage.
-   * mixedCols est toujours passé depuis le backend (analysis.mixed_columns),
-   * jamais deviné côté frontend.
-   */
   const proposeActions = (analysis: any, mixedCols: string[] = []) => {
     if (!analysis) return;
     const missingCount = Object.values<any>(analysis.missing_values || {}).reduce((a, b) => a + (b?.count || 0), 0);
@@ -607,7 +733,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         selected: false, risk: 'moyen', showOptions: false,
         icon: <Filter className="w-4 h-4" />, options: { ...opts },
       },
-      // ✅ L'action mixed_columns n'apparaît QUE si le backend a détecté des colonnes mixtes
       ...(mixedCols.length > 0 ? [{
         id: 'mixed_columns', title: 'Nettoyer les colonnes mixtes',
         description: `${mixedCols.length} colonne(s) avec mélange numérique/texte : ${mixedCols.slice(0, 3).join(', ')}${mixedCols.length > 3 ? '…' : ''}`,
@@ -675,7 +800,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     addMessage('user', `✅ Actions : ${selected.map(a => a.title).join(', ')}`);
     addMessage('bot', '🔧 Nettoyage en cours...', 'loading');
 
-    // Entrée optimiste locale
     const localId = addLocalHistoryEntry(combinedTitle, mergedOpts);
 
     try {
@@ -695,7 +819,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         const rowResult = `${data.results?.initial_rows || '?'} → ${data.results?.final_rows || '?'} lignes`;
         updateLocalHistoryEntry(localId, 'success', rowResult);
 
-        // ✅ Remplacer l'historique local par celui du backend (source de vérité)
         if (data.history_entry) {
           const backendEntry = backendEntryToHistoryEntry(data.history_entry);
           setOperationHistory(prev => [backendEntry, ...prev.filter(e => e.id !== localId)]);
@@ -725,7 +848,7 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     if (results.mixed_columns_corrected) summary += `• ${results.mixed_columns_corrected} valeurs mixtes corrigées\n`;
     if (results.outliers_info)      summary += `• ${results.outliers_info.total_outliers || 0} outliers (${results.outliers_info.method_used})\n`;
     if (results.text_normalized)    summary += `• ${results.text_normalized} textes normalisés\n`;
-    summary += `\n💾 Données nettoyées prêtes au téléchargement !`;
+    summary += `\n💾 Choisissez le format et téléchargez vos données nettoyées !`;
     addMessage('bot', summary, 'results');
     addMessage('bot', { downloadUrl: `${API_URL}/api/download/${sessionId}`, filename: downloadFilename }, 'download');
   };
@@ -747,7 +870,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
         setAnalysisData(data.analysis);
         setOperationHistory([]);
 
-        // ✅ Colonnes mixtes depuis le backend
         const backendMixed: string[] = data.analysis?.mixed_columns || [];
         setMixedColumns(backendMixed);
 
@@ -772,7 +894,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
       const res = await authFetch(endpoint);
       if (!res.ok) { const e = await res.json(); addMessage('bot', `❌ ${e.error}`); return; }
       const data = await res.json();
-      // ✅ Récupérer mixed_columns depuis le backend si présent dans la réponse preview
       if (data.mixed_columns) setMixedColumns(data.mixed_columns);
       setPreviewData(data); setPreviewType(type); setShowPreview(true);
     } catch (err: any) { addMessage('bot', `❌ ${err.message}`); }
@@ -856,7 +977,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
   };
 
-  // ── Cell issues (preview) — basée sur analysisData et mixedColumns backend ─
   const getCellIssues = (value: any, colName: string) => {
     if (!analysisData) return [];
     const issues: any[] = [];
@@ -875,7 +995,6 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
     }
     if (analysisData.date_formats?.[colName]?.length > 1)
       issues.push({ label: 'Format date mixte', description: `${analysisData.date_formats[colName].length} formats différents`, color: 'bg-orange-100 border-orange-400' });
-    // ✅ Colonne mixte : définie par le backend, pas par heuristique frontend
     if (mixedColumns.includes(colName) && value !== null && value !== undefined && value !== '' && isNaN(Number(value)))
       issues.push({ label: 'Valeur texte inattendue', description: 'Colonne attendue numérique', color: 'bg-pink-100 border-pink-400' });
     return issues;
@@ -902,13 +1021,20 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
               </span>
             )}
           </button>
+
+          {/* ── Multi-download avec sélecteur de format ─────────────────── */}
           {selectedSessions.length > 0 && (
-            <div className="space-y-2">
-              <button onClick={async () => {
+            <MultiDownloadBar
+              selectedSessions={selectedSessions}
+              isDownloading={isDownloading}
+              onSelectAll={() => setSelectedSessions(sessions.filter(s => s.status === 'cleaned').slice(0, 10).map(s => s.session_id))}
+              onClear={() => setSelectedSessions([])}
+              onDownload={async (fmt) => {
                 setIsDownloading(true);
                 try {
                   const res = await authFetch(`${API_URL}/api/download-multiple`, {
-                    method: 'POST', body: JSON.stringify({ session_ids: selectedSessions })
+                    method: 'POST',
+                    body: JSON.stringify({ session_ids: selectedSessions, format: fmt })
                   });
                   if (!res.ok) { const e = await res.json(); addMessage('bot', `❌ ${e.error}`); return; }
                   const blob = await res.blob();
@@ -917,22 +1043,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                   a.href = url; a.download = `data_cleaned_${Date.now()}.zip`;
                   document.body.appendChild(a); a.click();
                   window.URL.revokeObjectURL(url); document.body.removeChild(a);
-                  addMessage('bot', `✅ ${selectedSessions.length} fichier(s) téléchargé(s) !`);
+                  addMessage('bot', `✅ ${selectedSessions.length} fichier(s) téléchargé(s) en ${fmt.toUpperCase()} !`);
                   setSelectedSessions([]);
                 } finally { setIsDownloading(false); }
-              }} disabled={isDownloading}
-                className="w-full bg-green-600 text-white rounded-lg px-4 py-3 hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50">
-                {isDownloading
-                  ? <><div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />Téléchargement...</>
-                  : <><Download className="w-4 h-4" />Télécharger {selectedSessions.length} fichier(s)</>}
-              </button>
-              <div className="flex gap-2">
-                <button onClick={() => setSelectedSessions(sessions.filter(s => s.status === 'cleaned').slice(0, 10).map(s => s.session_id))}
-                  className="flex-1 bg-blue-100 text-blue-700 rounded-lg px-3 py-2 hover:bg-blue-200 text-sm font-medium">Tout sélect.</button>
-                <button onClick={() => setSelectedSessions([])}
-                  className="flex-1 bg-gray-100 text-gray-700 rounded-lg px-3 py-2 hover:bg-gray-200 text-sm font-medium">Annuler</button>
-              </div>
-            </div>
+              }}
+            />
           )}
         </div>
 
@@ -1100,17 +1215,11 @@ const DataCleaningAssistant: React.FC<Props> = ({ user, onLogout }) => {
                     <div className="whitespace-pre-line text-gray-800">{msg.content}</div>
 
                   ) : msg.type === 'download' ? (
-                    <button onClick={async () => {
-                      const res = await authFetch(msg.content.downloadUrl);
-                      const blob = await res.blob();
-                      const url = window.URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url; a.download = msg.content.filename;
-                      document.body.appendChild(a); a.click();
-                      window.URL.revokeObjectURL(url); document.body.removeChild(a);
-                    }} className="mt-2 bg-gray-900 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition-colors">
-                      <Download className="w-4 h-4" /> Télécharger {msg.content.filename}
-                    </button>
+                    /* ── Sélecteur de format + bouton téléchargement ── */
+                    <DownloadMessage
+                      content={msg.content}
+                      onMessage={(text) => addMessage('bot', text)}
+                    />
 
                   ) : msg.type === 'download-report' ? (
                     <button onClick={async () => {

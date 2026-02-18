@@ -55,6 +55,7 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 sessions_db = {}
 
+SUPPORTED_DOWNLOAD_FORMATS = {'csv', 'xlsx', 'json', 'xml'}
 
 # -------------------- UTILITAIRES --------------------
 
@@ -105,16 +106,60 @@ def load_file(filepath, file_extension):
             df = pd.read_csv(filepath, encoding='utf-8', sep=',', on_bad_lines='skip')
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
+
         elif file_extension in ['xlsx', 'xls']:
             df = pd.read_excel(filepath)
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
+
         elif file_extension == 'json':
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            df = pd.DataFrame(data)
+            # ── CORRECTION : gestion robuste de toutes les structures JSON ──
+            encodings = ['utf-8', 'utf-8-sig', 'latin-1']
+            data = None
+            last_err = None
+            for enc in encodings:
+                try:
+                    with open(filepath, 'r', encoding=enc) as f:
+                        data = json.load(f)
+                    break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+            if data is None:
+                raise ValueError(f"Impossible de décoder le JSON : {last_err}")
+
+            if isinstance(data, list):
+                # Cas standard : [{...}, {...}]
+                if len(data) == 0:
+                    raise ValueError("Le fichier JSON contient une liste vide.")
+                if isinstance(data[0], dict):
+                    df = pd.DataFrame(data)
+                else:
+                    # Liste de scalaires → une colonne
+                    df = pd.DataFrame(data, columns=['value'])
+
+            elif isinstance(data, dict):
+                # Cherche la première clé dont la valeur est une liste d'objets
+                list_keys = [k for k, v in data.items() if isinstance(v, list)]
+                if list_keys:
+                    # Prend la liste la plus longue parmi les candidates
+                    best_key = max(list_keys, key=lambda k: len(data[k]))
+                    logging.debug(f"[load_file JSON] clé choisie : '{best_key}'")
+                    df = pd.DataFrame(data[best_key])
+                else:
+                    # Objet plat → une seule ligne
+                    df = pd.DataFrame([data])
+
+            else:
+                raise ValueError(
+                    f"Structure JSON non supportée (type={type(data).__name__}). "
+                    "Attendu : liste d'objets ou objet avec une clé contenant une liste."
+                )
+
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
+
         elif file_extension == 'xml':
             tree = ET.parse(filepath)
             root = tree.getroot()
@@ -125,8 +170,10 @@ def load_file(filepath, file_extension):
             df = pd.DataFrame(data)
             df.replace(r'^\s*$', np.nan, regex=True, inplace=True)
             return df
+
         else:
             raise ValueError(f"Extension {file_extension} non supportée")
+
     except Exception as e:
         logging.error(f"[load_file ERROR] {str(e)}")
         raise Exception(f"Impossible de charger le fichier: {str(e)}")
@@ -139,13 +186,17 @@ def save_file(df, filepath, file_extension):
         elif file_extension in ['xlsx', 'xls']:
             df.to_excel(filepath, index=False)
         elif file_extension == 'json':
-            df.to_json(filepath, orient='records', indent=2)
+            df.to_json(filepath, orient='records', indent=2, force_ascii=False)
         elif file_extension == 'xml':
             root = ET.Element('data')
             for _, row in df.iterrows():
                 record = ET.SubElement(root, 'record')
                 for col in df.columns:
-                    record_elem = ET.SubElement(record, str(col))
+                    # Sanitize tag name (XML ne tolère pas certains caractères)
+                    tag = re.sub(r'[^a-zA-Z0-9_\-.]', '_', str(col))
+                    if tag and tag[0].isdigit():
+                        tag = f'col_{tag}'
+                    record_elem = ET.SubElement(record, tag or 'col')
                     val = row[col]
                     record_elem.text = '' if pd.isna(val) else str(val)
             tree = ET.ElementTree(root)
@@ -162,23 +213,15 @@ def _is_truly_mixed_column(series: pd.Series) -> bool:
     Retourne True UNIQUEMENT si la colonne contient À LA FOIS :
       - au moins une valeur numérique valide
       - au moins une valeur texte non-numérique non-nulle
-
-    Exemples :
-      [3, 1, 'HURLEY', 2]       → True   (mixte réelle)
-      ['PUTNAM', 'BERKELEY']    → False  (texte pur → NE PAS TOUCHER)
-      [1.5, 2.0, np.nan]        → False  (numérique avec manquants seulement)
-      ['--', 'na', 1, 2]        → True   (pseudo-nulls texte + numériques)
-      [np.nan, np.nan]          → False  (tout null)
     """
     non_null = series.dropna()
     if len(non_null) == 0:
         return False
 
     numeric_converted = pd.to_numeric(non_null, errors='coerce')
-    n_numeric = int(numeric_converted.notna().sum())   # valeurs vraiment numériques
-    n_text = int(numeric_converted.isna().sum())       # valeurs non convertibles = texte
+    n_numeric = int(numeric_converted.notna().sum())
+    n_text = int(numeric_converted.isna().sum())
 
-    # Les DEUX catégories doivent être présentes pour qualifier de "mixte"
     return n_numeric > 0 and n_text > 0
 
 
@@ -215,10 +258,6 @@ class DataAnalyzer:
 
     @staticmethod
     def detect_mixed_columns(df):
-        """
-        Retourne uniquement les colonnes avec un vrai mélange num/texte.
-        Colonnes purement textuelles (ST_NAME, OWN_OCCUPIED…) sont ignorées.
-        """
         return [col for col in df.columns if _is_truly_mixed_column(df[col])]
 
     @staticmethod
@@ -344,7 +383,6 @@ class DataAnalyzer:
 
 class DataCleaner:
 
-    # ── 1. Doublons ───────────────────────────────────────────────────────────
     @staticmethod
     def remove_duplicates(df, uniqueness_threshold=0.95):
         initial_len = len(df)
@@ -366,17 +404,10 @@ class DataCleaner:
             "final_rows": len(df)
         }
 
-    # ── 2. Valeurs manquantes ─────────────────────────────────────────────────
     @staticmethod
     def handle_missing_values(df, column_types,
                                numeric_strategy: str = 'median',
                                text_strategy: str = 'mode'):
-        """
-        numeric_strategy : 'mean' | 'median' | 'mode' | 'zero' | 'drop'
-        text_strategy    : 'mode' | 'empty' | 'drop'
-
-        NOTE : les colonnes mixtes sont ignorées ici (gérées par handle_mixed_columns).
-        """
         corrected = 0
         rows_to_drop = set()
 
@@ -386,7 +417,6 @@ class DataCleaner:
             if count == 0:
                 continue
 
-            # ✅ Ignorer les colonnes mixtes — elles ont leur propre traitement
             if _is_truly_mixed_column(df[col]):
                 continue
 
@@ -427,35 +457,17 @@ class DataCleaner:
 
         return df, int(corrected)
 
-    # ── 3. Colonnes mixtes ────────────────────────────────────────────────────
     @staticmethod
     def handle_mixed_columns(df, mixed_strategy: str = 'replace_median'):
-        """
-        Traite UNIQUEMENT les colonnes qui contiennent à la fois des valeurs
-        numériques valides ET du texte non-numérique non-null.
-
-        Les colonnes purement textuelles (ST_NAME = 'PUTNAM', 'BERKELEY'…)
-        ne contiennent AUCUNE valeur numérique → _is_truly_mixed_column()
-        retourne False → elles sont ignorées et leurs données préservées.
-
-        mixed_strategy :
-          'to_numeric'     → convertit en numérique (texte → NaN pour suite)
-          'replace_median' → remplace les valeurs texte par la médiane
-          'replace_mean'   → remplace les valeurs texte par la moyenne
-          'drop_rows'      → supprime les lignes avec valeur texte inattendue
-        """
         corrections = 0
 
         for col in df.columns:
-            # ✅ GARDE-FOU CRITIQUE : ne traiter que les vraies colonnes mixtes
             if not _is_truly_mixed_column(df[col]):
                 continue
 
             original_nulls = df[col].isna()
             numeric_attempt = pd.to_numeric(df[col], errors='coerce')
             new_nulls = numeric_attempt.isna()
-
-            # Lignes non-nulles qui n'ont pas pu être converties en numérique
             mixed_mask = new_nulls & ~original_nulls
 
             if mixed_mask.sum() == 0:
@@ -470,29 +482,24 @@ class DataCleaner:
             if mixed_strategy == 'to_numeric':
                 df[col] = numeric_attempt
                 corrections += int(mixed_mask.sum())
-
             elif mixed_strategy == 'replace_median':
                 median_val = numeric_attempt.median()
                 df[col] = numeric_attempt
                 df.loc[mixed_mask, col] = median_val
                 corrections += int(mixed_mask.sum())
-
             elif mixed_strategy == 'replace_mean':
                 mean_val = numeric_attempt.mean()
                 df[col] = numeric_attempt
                 df.loc[mixed_mask, col] = mean_val
                 corrections += int(mixed_mask.sum())
-
             elif mixed_strategy == 'drop_rows':
                 corrections += int(mixed_mask.sum())
                 df = df[~mixed_mask].reset_index(drop=True)
 
         return df, int(corrections)
 
-    # ── 4. Outliers ───────────────────────────────────────────────────────────
     @staticmethod
     def remove_outliers(df, column_types, method: str = 'median'):
-        """method : 'median' | 'mean' | 'cap' | 'nan' | 'remove' | 'flag'"""
         initial = len(df)
         outliers_info = {}
 
@@ -532,7 +539,6 @@ class DataCleaner:
             'total_outliers': sum(outliers_info.values()) if outliers_info else 0
         }
 
-    # ── 5. Nettoyage texte ────────────────────────────────────────────────────
     @staticmethod
     def clean_text(df, column_types,
                    remove_emojis: bool = True,
@@ -567,7 +573,6 @@ class DataCleaner:
 
         return df, int(corrections)
 
-    # ── 6. Harmonisation dates ────────────────────────────────────────────────
     @staticmethod
     def harmonize_dates(df, column_types, target_format: str = 'YYYY-MM-DD'):
         fmt_map = {
@@ -585,10 +590,8 @@ class DataCleaner:
                 )
         return df
 
-    # ── 7. Normalisation casse ────────────────────────────────────────────────
     @staticmethod
     def normalize_case(df, column_types, case_style: str = 'title'):
-        """case_style : 'title' | 'lower' | 'upper'"""
         corrections = 0
         for col in df.columns:
             if column_types.get(col) != 'text':
@@ -604,24 +607,8 @@ class DataCleaner:
             corrections += int((before != after).sum())
         return df, int(corrections)
 
-    # ── 8. Orchestrateur ──────────────────────────────────────────────────────
     @staticmethod
     def apply_cleaning(df, actions, column_types, outlier_method='median', options=None):
-        """
-        Ordre : doublons → mixtes → manquants → outliers → texte → dates → casse
-
-        options (dict, clés optionnelles) :
-          numericStrategy    'mean'|'median'|'mode'|'zero'|'drop'
-          textStrategy       'mode'|'empty'|'drop'
-          mixedStrategy      'to_numeric'|'replace_median'|'replace_mean'|'drop_rows'
-          outlierMethod      'median'|'mean'|'cap'|'nan'|'remove'|'flag'
-          removeEmojis       bool
-          removeSpecialChars bool
-          trimSpaces         bool
-          deduplicateSpaces  bool
-          targetFormat       'YYYY-MM-DD'|'DD/MM/YYYY'|'MM/DD/YYYY'
-          caseStyle          'title'|'lower'|'upper'
-        """
         if options is None:
             options = {}
 
@@ -721,7 +708,7 @@ def upload_file(current_user_id):
             'analysis': analysis,
             'timestamp': datetime.now().isoformat(),
             'user_id': current_user_id,
-            'operation_history': []      # ← Historique persistant par session
+            'operation_history': []
         }
 
         return jsonify({
@@ -790,7 +777,6 @@ def get_session_details(current_user_id, session_id):
         return jsonify({'error': str(e)}), 500
 
 
-# ── Route dédiée : historique d'une session ───────────────────────────────────
 @app.route('/api/session/<session_id>/history', methods=['GET'])
 @token_required
 def get_session_history(current_user_id, session_id):
@@ -857,7 +843,6 @@ def clean_data(current_user_id):
         session['cleaning_results'] = results
         session['status'] = 'cleaned'
 
-        # ── Persister l'opération dans l'historique de la session ──────────
         history_entry = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -882,7 +867,6 @@ def clean_data(current_user_id):
         if 'operation_history' not in session:
             session['operation_history'] = []
         session['operation_history'].insert(0, history_entry)
-        # ───────────────────────────────────────────────────────────────────
 
         return jsonify({
             'session_id': session_id,
@@ -893,7 +877,6 @@ def clean_data(current_user_id):
 
     except Exception as e:
         logging.error(f"[CLEAN ERROR] {str(e)}")
-        # Enregistrer l'erreur dans l'historique
         if session is not None:
             if 'operation_history' not in session:
                 session['operation_history'] = []
@@ -1007,25 +990,56 @@ def preview_cleaned_data(current_user_id, session_id):
         return jsonify({'error': str(e)}), 500
 
 
+# ── Route de téléchargement avec choix de format ──────────────────────────────
 @app.route('/api/download/<session_id>', methods=['GET'])
 @token_required
 def download_file(current_user_id, session_id):
+    """
+    Télécharge le fichier nettoyé dans le format demandé.
+    Query param : ?format=csv|xlsx|json|xml  (défaut = format d'origine)
+    """
     try:
         if session_id not in sessions_db:
             return jsonify({'error': 'Session non trouvée'}), 404
 
         session = sessions_db[session_id]
-
         if session.get('user_id') != current_user_id:
             return jsonify({'error': 'Accès non autorisé'}), 403
+        if 'cleaned_dataframe' not in session:
+            return jsonify({'error': 'Fichier nettoyé non disponible — lancez d\'abord un nettoyage'}), 404
 
-        if 'cleaned_filepath' not in session:
-            return jsonify({'error': 'Fichier nettoyé non disponible'}), 404
+        # Format demandé (query param), défaut = format original du fichier uploadé
+        requested_format = request.args.get('format', session['file_extension']).lower().strip('.')
+        if requested_format not in SUPPORTED_DOWNLOAD_FORMATS:
+            return jsonify({
+                'error': f"Format '{requested_format}' non supporté.",
+                'supported': sorted(SUPPORTED_DOWNLOAD_FORMATS)
+            }), 400
+
+        df = session['cleaned_dataframe']
+        base_name = session['filename'].rsplit('.', 1)[0]
+        download_name = f"cleaned_{base_name}.{requested_format}"
+        out_path = os.path.join(
+            app.config['CLEANED_FOLDER'],
+            f"{session_id}_export.{requested_format}"
+        )
+
+        save_file(df, out_path, requested_format)
+
+        mime_types = {
+            'csv':  'text/csv',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'json': 'application/json',
+            'xml':  'application/xml',
+        }
+
+        logging.info(f"[DOWNLOAD] session={session_id}, format={requested_format}, file={download_name}")
 
         return send_file(
-            session['cleaned_filepath'],
+            out_path,
             as_attachment=True,
-            download_name=session['cleaned_filename']
+            download_name=download_name,
+            mimetype=mime_types[requested_format]
         )
 
     except Exception as e:
@@ -1036,14 +1050,24 @@ def download_file(current_user_id, session_id):
 @app.route('/api/download-multiple', methods=['POST'])
 @token_required
 def download_multiple(current_user_id):
+    """
+    Télécharge plusieurs fichiers nettoyés dans un ZIP.
+    Body JSON : { session_ids: [...], format: "csv" }  (format optionnel, défaut csv)
+    """
     try:
         data = request.json
         session_ids = data.get('session_ids', [])
+        requested_format = data.get('format', 'csv').lower().strip('.')
 
         if not session_ids:
             return jsonify({'error': 'Aucune session sélectionnée'}), 400
         if len(session_ids) > 10:
             return jsonify({'error': 'Maximum 10 fichiers à la fois'}), 400
+        if requested_format not in SUPPORTED_DOWNLOAD_FORMATS:
+            return jsonify({
+                'error': f"Format '{requested_format}' non supporté.",
+                'supported': sorted(SUPPORTED_DOWNLOAD_FORMATS)
+            }), 400
 
         zip_buffer = BytesIO()
         with ZipFile(zip_buffer, 'w') as zip_file:
@@ -1053,11 +1077,18 @@ def download_multiple(current_user_id):
                 session = sessions_db[session_id]
                 if session.get('user_id') != current_user_id:
                     continue
-                if 'cleaned_filepath' not in session:
+                if 'cleaned_dataframe' not in session:
                     continue
-                if not os.path.exists(session['cleaned_filepath']):
-                    continue
-                zip_file.write(session['cleaned_filepath'], arcname=session['cleaned_filename'])
+
+                df = session['cleaned_dataframe']
+                base_name = session['filename'].rsplit('.', 1)[0]
+                export_name = f"cleaned_{base_name}.{requested_format}"
+                tmp_path = os.path.join(
+                    app.config['CLEANED_FOLDER'],
+                    f"{session_id}_multi_export.{requested_format}"
+                )
+                save_file(df, tmp_path, requested_format)
+                zip_file.write(tmp_path, arcname=export_name)
 
         zip_buffer.seek(0)
         return send_file(
@@ -1160,7 +1191,6 @@ def generate_report(current_user_id):
                 f"{len(mixed_cols)} colonne(s) avec mélange numérique/texte : {', '.join(mixed_cols)}"
             )
 
-        # Historique des opérations dans le rapport
         history = session.get('operation_history', [])
         if history:
             doc.add_heading('📋 Historique des Opérations', level=1)
